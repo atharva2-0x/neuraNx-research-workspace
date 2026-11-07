@@ -1,9 +1,7 @@
 """Read-only interview API. Persistent uploads belong to the OCI backend."""
 import json
-import os
 import secrets
 import re
-import httpx
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import JSONResponse, Response, FileResponse
@@ -11,49 +9,34 @@ from app.answering import answer_question
 data=json.loads((Path(__file__).resolve().parents[1]/'evidence.json').read_text())
 meta=data['metadata'];payload=data['payload']
 app=FastAPI()
-backend_file=Path(__file__).resolve().parents[1]/'backend.json'
-BACKEND_ORIGIN=os.getenv('BACKEND_ORIGIN') or (json.loads(backend_file.read_text())['origin'] if backend_file.exists() else '')
 
 @app.api_route('/{path:path}',methods=['GET','POST','PATCH'])
 async def route(path:str,request:Request):
     url=request.query_params.get("route",request.url.path)
     root=Path(__file__).resolve().parents[1]
     if url=='/':
-        html=(root/'ui/index.html').read_text().replace('Local, private workspace','Private browser workspace').replace('Local workspace','Private browser workspace').replace('Up to 25 MB','Up to 4 MB')
+        html=(root/'ui/index.html').read_text().replace('Local, private workspace','Private browser workspace').replace('Local workspace','Private browser workspace').replace('Up to 25 MB','Up to 4 MB').replace('<body>','<body data-hosted="vercel">')
         return Response(html,media_type='text/html')
     if url in {'/static/app.js','/static/style.css','/static/favicon.svg'}:
         target=root/'ui'/url.split('/')[-1]
         if url.endswith('.js'):return Response(target.read_text().replace('25*1024*1024','4*1024*1024').replace('smaller than 25 MB','smaller than 4 MB'),media_type='application/javascript')
         return FileResponse(target)
     if url in {'/deck.html','/interview-preparation.html'}:return FileResponse(root/'docs'/url[1:])
-    if BACKEND_ORIGIN:
-        token=request.cookies.get('fund_workspace','')
-        if not re.fullmatch(r'[a-f0-9]{64}',token):token=secrets.token_hex(32)
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(40,connect=5)) as client:
-                response=await client.request(request.method,BACKEND_ORIGIN+url,params={k:v for k,v in request.query_params.items() if k!='route'},content=await request.body(),headers={'Content-Type':request.headers.get('content-type','application/json'),'X-Workspace':token})
-            if response.status_code<500:
-                result=Response(response.content,status_code=response.status_code,headers={'Content-Type':response.headers.get('content-type','application/json'),'X-Backend':'OCI','Cache-Control':'private, no-store'})
-                result.set_cookie('fund_workspace',token,max_age=60*60*24*30,httponly=True,secure=True,samesite='lax')
-                return result
-        except httpx.RequestError:
-            pass
-        # Only the already-public sample can run locally during an OCI outage.
-        if url=='/health':return {'status':'degraded','mode':'public sample fallback','oci_connected':False,'uploads_enabled':False}
-        if request.method=='PATCH' or (url.startswith('/documents/') and not url.startswith('/documents/'+meta['id'])):
-            raise HTTPException(503,'The private report server is reconnecting. Please retry shortly.')
-        if url=='/chat/query':
-            body=await request.json()
-            if body.get('document_id')!=meta['id']:raise HTTPException(503,'The private report server is reconnecting. Please retry shortly.')
-        meta['service_notice']='OCI is reconnecting. Showing the public sample; private uploads are temporarily unavailable.'
     if request.method=='POST':
         if url.endswith('/upload'):raise HTTPException(409,'Uploads require the persistent OCI backend, which is not connected yet')
         body=await request.json();question=body.get('question','')
         if body.get('document_id')!=meta['id']:raise HTTPException(404,'Document not found')
         if not isinstance(question,str) or not 2<=len(question.strip())<=2000:raise HTTPException(422,'Enter a question between 2 and 2000 characters')
-        return answer_question(payload,question,meta['id'])
+        request_payload=payload
+        vendor=body.get('provider');api_key=body.get('api_key')
+        if vendor or api_key:
+            if vendor not in {'openai','anthropic'} or not isinstance(api_key,str) or not 20<=len(api_key)<=300:
+                raise HTTPException(422,'Connect a valid OpenAI or Anthropic key first')
+            # Never retain a browser-supplied API key on the module-level sample payload.
+            request_payload={**payload,'_llm_credentials':{'provider':vendor,'api_key':api_key}}
+        return answer_question(request_payload,question,meta['id'])
     if request.method=='PATCH':raise HTTPException(409,'Persistent review requires the OCI backend')
-    if url=='/health':return {'status':'ok','mode':'read-only Vercel demo','oci_connected':False}
+    if url=='/health':return {'status':'ok','mode':'Vercel sample with per-request AI keys','oci_connected':False,'uploads_enabled':False}
     if url=='/documents':return [meta]
     if not url.startswith('/documents/'+meta['id']):raise HTTPException(404,'Not found')
     suffix=url.split(meta['id'],1)[1]
@@ -63,9 +46,17 @@ async def route(path:str,request:Request):
     if suffix=='/validation':return payload['issues']
     if suffix=='/metrics':return [f for f in payload['facts'] if all(f.get(k)==v for k,v in request.query_params.items() if k in {'metric','period','classification'})]
     if suffix=='/export':return JSONResponse({'document':meta,**payload},headers={'Content-Disposition':'attachment; filename="sample-evidence.json"'})
+    if suffix=='/file':
+        sample=root/'public'/'sample-report.pdf'
+        if sample.exists():return FileResponse(sample,media_type='application/pdf',filename=meta.get('filename','sample-report.pdf'),content_disposition_type='inline')
+        raise HTTPException(404,'Sample PDF not available')
     if suffix.startswith('/pages/'):
         try:n=int(suffix.split('/')[2])
         except ValueError:raise HTTPException(404,'Not found')
         if not 1<=n<=len(payload['pages']):raise HTTPException(404,'Not found')
+        if suffix.endswith('/image'):
+            image=root/'public'/'pages'/f'{n}.png'
+            if image.exists():return FileResponse(image,media_type='image/png',headers={'Cache-Control':'public, max-age=86400'})
+            raise HTTPException(404,'Page image not available')
         return payload['pages'][n-1]
     raise HTTPException(404,'Not found')

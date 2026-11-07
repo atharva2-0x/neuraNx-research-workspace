@@ -57,33 +57,7 @@ def answer_question(payload,question,document_id):
         for f in selected:
             unit="%" if f["unit"]=="percent" else " "+f["unit"]
             rows.append(f"| {f['period']} | {f['metric'].replace('_',' ').title()} | {display(f['value'],1)}{unit} | p. {f['source']['page']} |")
-        # Compare source endpoints without manufacturing a market forecast or averaging conflicts.
-        def movement(metric,label):
-            observations=sorted([f for f in selected if f["metric"]==metric],key=lambda f:f["period"])
-            if not observations:return None
-            first,last=observations[0],observations[-1]
-            # Conflicting versions must not be silently reduced to one endpoint.
-            if any(len({f["value"] for f in observations if f["period"]==year})>1 for year in scope):
-                return f"{label} has conflicting source values; see the cited pages."
-            suffix="%" if first["unit"]=="percent" else ""
-            if first["period"]==last["period"]:return f"{label} was {display(first['value'],1)}{suffix}."
-            direction="rose" if decimal(last["value"])>decimal(first["value"]) else "fell" if decimal(last["value"])<decimal(first["value"]) else "was unchanged"
-            return f"{label} {direction} overall, from {display(first['value'],1)}{suffix} ({first['period']}) to {display(last['value'],1)}{suffix} ({last['period']})."
-        if selected:
-            if re.search(r"\b(market|benchmark)\b",q):
-                bullets=[movement("benchmark_return","The report’s benchmark return"),movement("nav","Fund NAV")]
-                bullets=[b for b in bullets if b]
-                if len(bullets)==2:bullets[1]+=" This describes the report, not live market conditions."
-            else:
-                bullets=[movement("nav","Reported NAV"),movement("fund_return","Annual fund return")]
-                bullets=[b for b in bullets if b]
-            if len(bullets)<2:bullets.append(f"Historical coverage: {', '.join(scope)}; forecasts are excluded.")
-            answer="\n".join("- "+b for b in bullets[:2])
-            if re.search(r"\b(data|tables?|breakdown|figures|numbers|details?|detailed|deeper|compare|comparison)\b",q) and not re.search(r"\b(no tables?|without (?:data|tables?)|only (?:two|2) (?:lines|points|bullets))\b",q):
-                answer+="\n\n"+"\n".join(rows)
-        else:
-            route="unsupported";answer=unsupported("No historical observations were found for the requested period.")
-
+        answer=(f"### Historical summary\n\nUsing the latest available historical years in this report: {', '.join(scope)}. Forecasts are excluded.\n\n"+"\n".join(rows)) if selected else unsupported("No historical observations were found for the requested period.")
     elif "compound" in q and len(re.findall(r"[+-]?\d+(?:\.\d+)?\s*%",q))>=2:
         values=re.findall(r"([+-]?\d+(?:\.\d+)?)\s*%",q)
         result=compound(values)
@@ -249,16 +223,13 @@ def answer_question(payload,question,document_id):
                 if content.startswith(title):content=content[len(title):].strip()
                 lines.append(f"{title} (p. {p['page']}): {content[:950]}")
             answer="The report states:\n\n"+"\n\n".join(lines)
-            if provider.enabled("ENABLE_LLM"):
+            credentials=payload.get("_llm_credentials")
+            if credentials or provider.enabled("ENABLE_LLM"):
                 try:
-                    composed=provider.compose(question,passages);answer=composed.answer;composer="llm";source_overrides=[s for s in source_overrides if s["page"] in composed.citation_pages]
+                    composed=provider.compose(question,passages,credentials=credentials);answer=composed.answer;composer="llm";source_overrides=[s for s in source_overrides if s["page"] in composed.citation_pages]
                 except Exception:
                     logger.exception("answer_composer_failed",extra={"document_id":document_id})
                     warnings.append("The explanation provider is unavailable or failed evidence validation. Showing source passages instead.")
-    if composer=="deterministic" and route not in {"clarification","unsupported"} and not re.search(r"^(?:[-*] |#|\|)",answer,re.M) and len(answer.split())<=110:
-        sentences=re.split(r"(?<=[.!?])\s+(?=[A-Z])",answer.strip())
-        if len(sentences)>1:answer="- "+sentences[0]+"\n- "+" ".join(sentences[1:])
-        elif answer:answer="- "+answer
     selected_ids={f["id"] for f in selected}
     # Attach findings for the same metric/period even when an identical repeated
     # observation has a different ID on another page.

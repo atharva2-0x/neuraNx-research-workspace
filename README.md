@@ -111,6 +111,8 @@ Open **http://localhost:8000** in your browser.
 
 ## Local Development (without Docker)
 
+`requirements.txt` is intentionally limited to the Vercel serverless API dependencies. For local development, `pip install -e ".[dev]"` installs the full extraction, database, and embedding stack declared in `pyproject.toml`.
+
 ### Prerequisites
 
 - Python 3.11+

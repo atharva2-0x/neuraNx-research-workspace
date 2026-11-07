@@ -58,8 +58,8 @@ def _get_local_embed_model():
     return _EMBED_MODEL
 
 
-def _openai_headers():
-    key = os.getenv("OPENAI_API_KEY")
+def _openai_headers(api_key=None):
+    key = api_key or os.getenv("OPENAI_API_KEY")
     if not key:
         raise ValueError("OPENAI_API_KEY is required when using the OpenAI provider")
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
@@ -119,11 +119,7 @@ SYSTEM_INSTRUCTIONS = (
     "Analyse the user intent, including broad questions and paraphrases. Explain concepts "
     "and draw qualitative conclusions supported by the evidence rather than demanding exact "
     "keywords. Answer the supported parts and state specific gaps. Use clean Markdown: "
-    "start with exactly two crisp Markdown bullet points, one short sentence each, "
-    "ideally no more than 25 words per bullet. Answer the question directly without a preamble "
-    "or repeating the question. Include a compact table or supporting data only when the user "
-    "asks for figures, comparisons, a breakdown or more detail. Otherwise stop after the two "
-    "bullets; retain material uncertainty and forecast or synthetic qualifications. "
+    "short paragraphs, headings and bullets; use tables for comparisons or repeated metrics. "
     "Keep conflicting source versions separate. Do not invent numbers. Return the requested schema."
 )
 
@@ -138,12 +134,12 @@ ANSWER_SCHEMA = {
 }
 
 
-def _compose_openai(question, passages):
+def _compose_openai(question, passages, api_key=None):
     """Compose an answer using the OpenAI Responses API."""
     with httpx.Client(timeout=30) as client:
         r = client.post(
             "https://api.openai.com/v1/responses",
-            headers=_openai_headers(),
+            headers=_openai_headers(api_key),
             json={
                 "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
                 "store": False,
@@ -170,15 +166,11 @@ def _compose_openai(question, passages):
         return ComposedAnswer.model_validate_json("".join(texts))
 
 
-def _compose_anthropic(question, passages):
+def _compose_anthropic(question, passages, api_key=None):
     """Compose an answer using Anthropic Claude."""
-    import anthropic
-
-    key = os.getenv("ANTHROPIC_API_KEY")
+    key = api_key or os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise ValueError("ANTHROPIC_API_KEY is required when using the Anthropic provider")
-
-    client = anthropic.Anthropic(api_key=key, max_retries=0, timeout=30.0)
     model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
     system_prompt = (
@@ -189,16 +181,18 @@ def _compose_anthropic(question, passages):
         "Do not number lists. Do not introduce numeric tokens absent from the supplied passages. Put page numbers only in citation_pages. Return ONLY the JSON object, no markdown fencing or extra text."
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=1000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": json.dumps({"question": question, "passages": passages})}],
-    )
-
-    if response.stop_reason == "max_tokens":
-        raise ValueError("LLM output exceeded token budget")
-    raw_text = "".join(block.text for block in response.content if block.type == "text").strip()
+    if api_key:
+        with httpx.Client(timeout=30) as client:
+            response=client.post("https://api.anthropic.com/v1/messages",headers={"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"},json={"model":model,"max_tokens":1000,"system":system_prompt,"messages":[{"role":"user","content":json.dumps({"question":question,"passages":passages})}]})
+            response.raise_for_status();response=response.json()
+        stop_reason=response.get("stop_reason")
+        content=response.get("content",[])
+    else:
+        import anthropic
+        response=anthropic.Anthropic(api_key=key,max_retries=0,timeout=30.0).messages.create(model=model,max_tokens=1000,system=system_prompt,messages=[{"role":"user","content":json.dumps({"question":question,"passages":passages})}])
+        stop_reason=response.stop_reason;content=[{"type":block.type,"text":block.text} for block in response.content if block.type=="text"]
+    if stop_reason == "max_tokens":raise ValueError("LLM output exceeded token budget")
+    raw_text = "".join(block.get("text","") for block in content if block.get("type") == "text").strip()
     # Strip markdown fencing if Claude wrapped the JSON
     if raw_text.startswith("```"):
         raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
@@ -207,15 +201,16 @@ def _compose_anthropic(question, passages):
     return ComposedAnswer.model_validate_json(raw_text)
 
 
-def compose(question, passages):
-    """Route to the configured LLM provider and validate the answer."""
+def compose(question, passages, credentials=None):
+    """Compose with configured or explicitly supplied, request-scoped credentials."""
     passages = [{"page": p["page"], "content": p["content"][:1800]} for p in passages[:3]]
     question = question[:1500]
-    provider = llm_provider()
+    provider = credentials["provider"] if credentials else llm_provider()
+    api_key = credentials.get("api_key") if credentials else None
     if provider == "openai":
-        answer = _compose_openai(question, passages)
+        answer = _compose_openai(question, passages, api_key)
     elif provider == "anthropic":
-        answer = _compose_anthropic(question, passages)
+        answer = _compose_anthropic(question, passages, api_key)
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER: {provider!r}. Use 'anthropic' or 'openai'.")
 

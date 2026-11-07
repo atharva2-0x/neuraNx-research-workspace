@@ -19,7 +19,7 @@ def main():
         shutil.copy2(Path('app')/name,root/'app'/name)
     (root/'evidence.json').write_text(json.dumps({'metadata':meta,'payload':payload}))
     shutil.copytree('ui',public/'static',dirs_exist_ok=True)
-    html=(Path('ui/index.html').read_text().replace('Local, private workspace','Private browser workspace').replace('Local workspace','Private browser workspace'))
+    html=(Path('ui/index.html').read_text().replace('Local, private workspace','Private browser workspace').replace('Local workspace','Private browser workspace').replace('<body>','<body data-hosted="vercel">'))
     (public/'index.html').write_text(html.replace('Up to 25 MB','Up to 4 MB'))
     js=(public/'static/app.js').read_text()
     js=js.replace('25*1024*1024','4*1024*1024').replace('smaller than 25 MB','smaller than 4 MB')
