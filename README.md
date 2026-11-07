@@ -111,7 +111,7 @@ Open **http://localhost:8000** in your browser.
 
 ## Local Development (without Docker)
 
-`requirements.txt` is intentionally limited to the Vercel serverless API dependencies. For local development, `pip install -e ".[dev]"` installs the full extraction, database, and embedding stack declared in `pyproject.toml`.
+`requirements.txt` is intentionally limited to the Vercel serverless API dependencies. For local development, `pip install -e ".[local,dev]"` installs the full extraction, database, and embedding stack declared in `pyproject.toml`.
 
 ### Prerequisites
 
@@ -125,7 +125,7 @@ Open **http://localhost:8000** in your browser.
 docker compose up db -d
 
 # Install Python dependencies
-pip install -e ".[dev]"
+pip install -e ".[local,dev]"
 
 # Run the server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -146,7 +146,7 @@ psql fund -c "CREATE EXTENSION vector;"
 # DATABASE_URL=postgresql+psycopg://youruser:yourpass@localhost:5432/fund
 
 # 4. Install dependencies
-pip install -e ".[dev]"
+pip install -e ".[local,dev]"
 
 # 5. Run
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -160,7 +160,7 @@ For quick testing without PostgreSQL (vector search uses in-memory cosine):
 # In .env, set:
 DATABASE_URL=sqlite:///data/fund.db
 
-pip install -e .
+pip install -e ".[local]"
 uvicorn app.main:app --reload
 ```
 
@@ -314,7 +314,7 @@ neuraNx-research-workspace/
 ## Running Tests
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[local,dev]"
 pytest -v
 ```
 

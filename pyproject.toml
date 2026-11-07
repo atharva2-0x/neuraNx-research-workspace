@@ -4,6 +4,11 @@ version = "1.0.0"
 description = "RAG-powered Document Management System chatbot for NeuraNx"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.115,<1", "httpx>=0.28,<1", "pydantic>=2,<3",
+]
+
+[project.optional-dependencies]
+local = [
   "fastapi>=0.115,<1", "uvicorn>=0.30,<1",
   "pdfplumber>=0.11,<1", "python-multipart>=0.0.20,<1",
   "httpx>=0.28,<1", "sqlalchemy>=2.0,<3", "python-dotenv>=1,<2",
@@ -12,7 +17,6 @@ dependencies = [
   "fastembed>=0.4,<1",
 ]
 
-[project.optional-dependencies]
 dev = ["pytest>=8,<10"]
 fast-pdf = ["pymupdf>=1.25,<2"]
 
@@ -26,3 +30,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.vercel]
+entrypoint = "api.index:app"

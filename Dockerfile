@@ -9,7 +9,7 @@ RUN apt-get update -o Acquire::Retries=3 \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml requirements.txt ./
 COPY app ./app
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir '.[local]'
 COPY ui ./ui
 RUN useradd --create-home analyst && mkdir -p /app/data/input /app/data/processed && chown -R analyst:analyst /app
 USER analyst
