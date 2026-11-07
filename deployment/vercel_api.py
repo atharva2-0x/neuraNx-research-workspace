@@ -21,13 +21,22 @@ async def route(path:str,request:Request):
         token=request.cookies.get('fund_workspace','')
         if not re.fullmatch(r'[a-f0-9]{64}',token):token=secrets.token_hex(32)
         try:
-            async with httpx.AsyncClient(timeout=45) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(40,connect=5)) as client:
                 response=await client.request(request.method,BACKEND_ORIGIN+url,params={k:v for k,v in request.query_params.items() if k!='route'},content=await request.body(),headers={'Content-Type':request.headers.get('content-type','application/json'),'X-Workspace':token})
+            if response.status_code<500:
+                result=Response(response.content,status_code=response.status_code,headers={'Content-Type':response.headers.get('content-type','application/json'),'X-Backend':'OCI','Cache-Control':'private, no-store'})
+                result.set_cookie('fund_workspace',token,max_age=60*60*24*30,httponly=True,secure=True,samesite='lax')
+                return result
         except httpx.RequestError:
-            raise HTTPException(503,'The research server is reconnecting. Please retry in a moment.')
-        result=Response(response.content,status_code=response.status_code,headers={'Content-Type':response.headers.get('content-type','application/json'),'X-Backend':'OCI','Cache-Control':'private, no-store'})
-        result.set_cookie('fund_workspace',token,max_age=60*60*24*30,httponly=True,secure=True,samesite='lax')
-        return result
+            pass
+        # Only the already-public sample can run locally during an OCI outage.
+        if url=='/health':return {'status':'degraded','mode':'public sample fallback','oci_connected':False,'uploads_enabled':False}
+        if request.method=='PATCH' or (url.startswith('/documents/') and not url.startswith('/documents/'+meta['id'])):
+            raise HTTPException(503,'The private report server is reconnecting. Please retry shortly.')
+        if url=='/chat/query':
+            body=await request.json()
+            if body.get('document_id')!=meta['id']:raise HTTPException(503,'The private report server is reconnecting. Please retry shortly.')
+        meta['service_notice']='OCI is reconnecting. Showing the public sample; private uploads are temporarily unavailable.'
     if request.method=='POST':
         if url.endswith('/upload'):raise HTTPException(409,'Uploads require the persistent OCI backend, which is not connected yet')
         body=await request.json();question=body.get('question','')

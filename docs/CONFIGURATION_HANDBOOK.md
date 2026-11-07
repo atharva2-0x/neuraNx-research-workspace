@@ -55,3 +55,38 @@ Why separate numeric and narrative routes? Decimal calculations are reproducible
 ## Submission boundaries
 
 The sample PDF is fictional: 50 pages, 49 tables, 346 observations, 13 findings. Arbitrary PDF table layouts and scanned images need broader parser/OCR evaluation. Private browser workspaces are capability-based isolation, not user accounts. Clearing cookies loses access. Do not promise zero downtime, universal document understanding, or tested LLM generation until those claims are verified.
+## Exact operator commands
+
+Run from the repository root (the private SSH key stays on your computer):
+
+```sh
+ssh -i deployment/.secrets/neuranx-oci -o UserKnownHostsFile=deployment/.secrets/known_hosts opc@92.4.81.209
+sudo systemctl status neuranx-api caddy postgresql
+sudo journalctl -u neuranx-api -n 80 --no-pager
+sudo journalctl -u caddy -n 80 --no-pager
+sudo journalctl -k --no-pager | grep -i 'out of memory\|killed process'
+free -m
+swapon --show
+df -h /
+curl -fsS http://127.0.0.1:8000/health
+sudo systemctl restart neuranx-api
+```
+
+From your laptop:
+
+```sh
+curl -fsS https://92-4-81-209.sslip.io/health
+curl -fsS https://neuranx-fund-intelligence.vercel.app/health
+git pull origin main
+git add <reviewed-files>
+git commit -m 'Describe the change'
+git push origin main
+```
+
+Vercel must use `[tool.vercel] entrypoint = "api.index:app"`. Without this explicit setting, framework detection may select `app/main.py`, which tries to create a local database on Vercel's read-only filesystem. That produces FUNCTION_INVOCATION_FAILED even if the OCI backend is healthy. The local app entrypoint remains `app.main:app`.
+
+`deployment/setup_vectors.sh` installs PostgreSQL and pgvector, creates database `neuranx` owned by local Unix user `opc`, enables the extension, and writes `/etc/systemd/system/neuranx-api.service.d/vectors.conf`. The Unix socket connection uses local peer authentication; no database password is exposed. `HOSTED_VECTORS=true` enables the hosted neural route. Model cache is `/opt/neuranx/models`. SQL schema and index definitions are in `app/hosted_vector.py`.
+
+For a backup, save `/opt/neuranx/private-data` and run `pg_dump neuranx > backup.sql` as `opc`. Keep backups outside the VM and restrict access. This manual procedure does not mean automated backups are configured. Certificate state lives under Caddy's HOME `/var/lib/caddy`; Caddy renews certificates automatically while ports 80/443 remain reachable. The free hostname depends on sslip.io and the current public IP. If the VM is replaced or its address changes, update DNS hostname, Caddy config and both backend.json files, then deploy.
+
+Reference docs: [Vercel entrypoint configuration](https://vercel.com/kb/guide/ship-a-fastapi-app-on-vercel), [pgvector](https://github.com/pgvector/pgvector), [FastEmbed model list](https://qdrant.github.io/fastembed/examples/Supported_Models/).
