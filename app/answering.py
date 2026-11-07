@@ -57,7 +57,26 @@ def answer_question(payload,question,document_id):
         for f in selected:
             unit="%" if f["unit"]=="percent" else " "+f["unit"]
             rows.append(f"| {f['period']} | {f['metric'].replace('_',' ').title()} | {display(f['value'],1)}{unit} | p. {f['source']['page']} |")
-        answer=(f"### Historical summary\n\nUsing the latest available historical years in this report: {', '.join(scope)}. Forecasts are excluded.\n\n"+"\n".join(rows)) if selected else unsupported("No historical observations were found for the requested period.")
+        
+        # Build a crisp, user-friendly 2-4 line executive summary
+        summary_lines = []
+        for yr in scope:
+            yr_facts = {f["metric"]: f for f in selected if f["period"] == yr}
+            nav_f = yr_facts.get("nav")
+            ret_f = yr_facts.get("fund_return")
+            bm_f = yr_facts.get("benchmark_return")
+            parts = []
+            if nav_f: parts.append(f"a closing NAV of {display(nav_f['value'], 1)}")
+            if ret_f: parts.append(f"an annual return of {display(ret_f['value'], 1)}%")
+            if bm_f: parts.append(f"compared to the benchmark's {display(bm_f['value'], 1)}%")
+            if parts:
+                summary_lines.append(f"In {yr}, the fund recorded {', '.join(parts)}.")
+        
+        if not summary_lines and selected:
+            summary_lines.append(f"The historical report covers performance for {', '.join(scope)} with verified source evidence.")
+        
+        exec_summary = " ".join(summary_lines)
+        answer=(f"### Historical summary\n\n{exec_summary}\n\nUsing the latest available historical years in this report: {', '.join(scope)}. Forecasts are excluded.\n\n"+"\n".join(rows)) if selected else unsupported("No historical observations were found for the requested period.")
     elif "compound" in q and len(re.findall(r"[+-]?\d+(?:\.\d+)?\s*%",q))>=2:
         values=re.findall(r"([+-]?\d+(?:\.\d+)?)\s*%",q)
         result=compound(values)
@@ -226,7 +245,8 @@ def answer_question(payload,question,document_id):
             credentials=payload.get("_llm_credentials")
             if credentials or provider.enabled("ENABLE_LLM"):
                 try:
-                    composed=provider.compose(question,passages,credentials=credentials);answer=composed.answer;composer="llm";source_overrides=[s for s in source_overrides if s["page"] in composed.citation_pages]
+                    kwargs = {"credentials": credentials} if credentials else {}
+                    composed=provider.compose(question,passages,**kwargs);answer=composed.answer;composer="llm";source_overrides=[s for s in source_overrides if s["page"] in composed.citation_pages]
                 except Exception:
                     logger.exception("answer_composer_failed",extra={"document_id":document_id})
                     warnings.append("The explanation provider is unavailable or failed evidence validation. Showing source passages instead.")

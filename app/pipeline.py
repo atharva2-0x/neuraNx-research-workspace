@@ -6,15 +6,26 @@ from decimal import Decimal
 from pathlib import Path
 from sqlalchemy import delete, select
 from app.db import DATA_DIR, Session, Document, FactRecord, ChunkRecord, ValidationRecord
-from app.extraction import extract_pdf, normalize, summarize
+from app.extraction import extract_pdf, extract_document, normalize, summarize
 from app.validation import validate
 from app.retrieval import chunks_from_pages
 
 logger = logging.getLogger("fund.ingestion")
 
 
-def pdf_path(document_id):
+def doc_file_path(document_id, filename=None):
+    if filename:
+        ext = Path(filename).suffix.lower() or ".pdf"
+        return DATA_DIR / "input" / f"{document_id}{ext}"
+    # If filename not provided, search matching files in DATA_DIR / "input"
+    for p in (DATA_DIR / "input").glob(f"{document_id}.*"):
+        return p
     return DATA_DIR / "input" / f"{document_id}.pdf"
+
+
+def pdf_path(document_id):
+    """Backwards-compatible helper returning the document file path."""
+    return doc_file_path(document_id)
 
 
 def register(content, filename):
@@ -24,7 +35,7 @@ def register(content, filename):
         existing = session.scalar(select(Document).where(Document.checksum==checksum))
         if existing:
             return existing.id, True
-        path = pdf_path(document_id)
+        path = doc_file_path(document_id, filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         session.add(Document(id=document_id, filename=Path(filename).name[:255], checksum=checksum, payload={}))
@@ -45,7 +56,11 @@ def run_pipeline(document_id):
         update(document_id,status="processing",stage="Extracting page text, tables, and geometry",progress=5,error=None)
         stages = []
         started = time.perf_counter()
-        pages = extract_pdf(pdf_path(document_id),lambda done,total:update(document_id,progress=5+int(done/total*45),page_count=total))
+        with Session() as session:
+            doc_record = session.get(Document, document_id)
+            doc_filename = doc_record.filename if doc_record else "document.pdf"
+        file_path = doc_file_path(document_id, doc_filename)
+        pages = extract_document(file_path, doc_filename, lambda done,total:update(document_id,progress=5+int(done/total*45),page_count=total))
         stages.append({"name":"Extract source evidence","description":f"{len(pages)} pages · native text, table cells, and chart-axis geometry preserved","duration_ms":int((time.perf_counter()-started)*1000)})
         update(document_id,stage="Normalizing facts and retaining source units",progress=55)
         started = time.perf_counter()

@@ -58,9 +58,12 @@ def test_new_upload_processes_and_keeps_documents_isolated(client,report,report_
 
 
 def test_bad_uploads(client):
-    assert client.post("/documents/upload",files={"file":("notes.txt",b"hello","text/plain")}).status_code==415
+    assert client.post("/documents/upload",files={"file":("unsupported.exe",b"binary payload","application/octet-stream")}).status_code==415
+    assert client.post("/documents/upload",files={"file":("empty.txt",b"","text/plain")}).status_code==422
     assert client.post("/documents/upload",files={"file":("fake.pdf",b"not a pdf","application/pdf")}).status_code==422
     assert client.post("/documents/upload",files={"file":("corrupt.pdf",b"%PDF-1.7\nno valid objects","application/pdf")}).status_code==422
+    assert client.post("/documents/upload",files={"file":("corrupt.docx",b"not a zip","application/vnd.openxmlformats-officedocument.wordprocessingml.document")}).status_code==422
+    assert client.post("/documents/upload",files={"file":("bad.json",b"not json{","application/json")}).status_code==422
 
 
 def test_review_state_is_persistent_without_changing_facts(client,report):

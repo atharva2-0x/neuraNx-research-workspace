@@ -83,21 +83,46 @@ def documents():
         return [metadata(d) for d in session.scalars(select(Document).order_by(Document.uploaded_at.desc()))]
 
 
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".text", ".json", ".md", ".csv"}
+
+
 @app.post("/documents/upload",status_code=202)
 async def upload(background_tasks:BackgroundTasks,file:UploadFile=File(...)):
-    if file.content_type not in {"application/pdf","application/octet-stream"} or not (file.filename or "").lower().endswith(".pdf"):
-        raise HTTPException(415,"Please upload a PDF file")
+    filename = (file.filename or "").strip()
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(415,"Unsupported file format. Supported formats: PDF, Word (.docx), JSON, Text (.txt, .md, .csv)")
     content=bytearray()
     while chunk:=await file.read(1024*1024):
         content.extend(chunk)
-        if len(content)>MAX_UPLOAD:raise HTTPException(413,f"PDF must be smaller than {MAX_UPLOAD//1024//1024} MB")
+        if len(content)>MAX_UPLOAD:raise HTTPException(413,f"File must be smaller than {MAX_UPLOAD//1024//1024} MB")
     await file.close()
-    if not content.startswith(b"%PDF-"):raise HTTPException(422,"The file is not a valid PDF")
-    try:
-        with pdfplumber.open(BytesIO(content)) as pdf:
-            if not 1<=len(pdf.pages)<=200:raise ValueError("PDF must contain between 1 and 200 pages")
-    except Exception as exc:
-        raise HTTPException(422,"The PDF is damaged, encrypted, or exceeds the 200-page limit") from exc
+
+    if ext == ".pdf":
+        if not content.startswith(b"%PDF-"):raise HTTPException(422,"The file is not a valid PDF")
+        try:
+            with pdfplumber.open(BytesIO(content)) as pdf:
+                if not 1<=len(pdf.pages)<=200:raise ValueError("PDF must contain between 1 and 200 pages")
+        except Exception as exc:
+            raise HTTPException(422,"The PDF is damaged, encrypted, or exceeds the 200-page limit") from exc
+    elif ext in {".docx", ".doc"}:
+        try:
+            import zipfile
+            with zipfile.ZipFile(BytesIO(content)) as z:
+                if "word/document.xml" not in z.namelist():
+                    raise ValueError("Missing document.xml")
+        except Exception as exc:
+            raise HTTPException(422,"The Word document is damaged or not a valid .docx file") from exc
+    elif ext == ".json":
+        try:
+            json.loads(content.decode("utf-8", errors="replace"))
+        except Exception as exc:
+            raise HTTPException(422,f"Invalid JSON format: {exc}") from exc
+    elif ext in {".txt", ".text", ".md", ".csv"}:
+        text_content = content.decode("utf-8", errors="replace").strip()
+        if not text_content:
+            raise HTTPException(422,"Text file is empty")
+
     doc_id,duplicate=register(bytes(content),file.filename)
     if not duplicate:background_tasks.add_task(run_pipeline,doc_id)
     return {**metadata(get_document(doc_id)),"duplicate":duplicate}
@@ -176,14 +201,43 @@ def image(document_id:str,page_number:int):
     cache=DATA_DIR/"processed"/document_id/"pages";cache.mkdir(parents=True,exist_ok=True)
     output=cache/f"{page_number}.png"
     if not output.exists():
-        with pdfplumber.open(pdf_path(document_id)) as pdf:pdf.pages[page_number-1].to_image(resolution=125).save(output)
+        from app.pipeline import doc_file_path
+        fpath = doc_file_path(document_id, doc.filename)
+        if fpath.suffix.lower() == ".pdf":
+            with pdfplumber.open(fpath) as pdf:pdf.pages[page_number-1].to_image(resolution=125).save(output)
+        else:
+            # Generate a clean rendered image for non-PDF pages using PIL
+            from PIL import Image, ImageDraw
+            img = Image.new("RGB", (800, 1000), color=(250, 250, 252))
+            draw = ImageDraw.Draw(img)
+            page_data = doc.payload["pages"][page_number-1]
+            draw.text((30, 30), f"{doc.filename} — Page {page_number}", fill=(30, 41, 59))
+            draw.line([(30, 55), (770, 55)], fill=(203, 213, 225), width=2)
+            lines = page_data.get("text", "").splitlines()
+            y = 75
+            for line in lines[:40]:
+                draw.text((30, y), line[:80], fill=(71, 85, 105))
+                y += 22
+            img.save(output, format="PNG")
     return FileResponse(output,media_type="image/png",headers={"Cache-Control":"private, max-age=86400"})
 
 
 @app.get("/documents/{document_id}/file")
 def file(document_id:str):
     doc=get_document(document_id)
-    return FileResponse(pdf_path(document_id),media_type="application/pdf",filename=doc.filename,content_disposition_type="inline")
+    from app.pipeline import doc_file_path
+    fpath = doc_file_path(document_id, doc.filename)
+    media_map = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".json": "application/json",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".csv": "text/csv",
+    }
+    media_type = media_map.get(fpath.suffix.lower(), "application/octet-stream")
+    return FileResponse(fpath,media_type=media_type,filename=doc.filename,content_disposition_type="inline")
 
 
 @app.get("/documents/{document_id}/export")

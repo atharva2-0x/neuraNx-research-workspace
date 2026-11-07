@@ -4,9 +4,12 @@ This adapter recognizes the report's annual, quarterly, allocation and forecast
 tables by headers, not by hardcoded page numbers or copied planning values.
 """
 import hashlib
+import json
 import re
 import shutil
 import subprocess
+import zipfile
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -65,6 +68,147 @@ def extract_pdf(path: Path, progress=None):
     if not any(p["char_count"] >= 50 for p in pages):
         raise ValueError("No usable text was extracted. This PDF may require OCR; install Tesseract or upload a text-based PDF.")
     return pages
+
+
+def extract_docx(path: Path, progress=None):
+    pages = []
+    with zipfile.ZipFile(path) as z:
+        if "word/document.xml" not in z.namelist():
+            raise ValueError("Invalid Word document: missing word/document.xml")
+        xml_content = z.read("word/document.xml")
+        tree = ET.fromstring(xml_content)
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        
+        paragraphs = []
+        for p in tree.iterfind(".//w:p", ns):
+            texts = [t.text for t in p.iterfind(".//w:t", ns) if t.text]
+            if texts:
+                paragraphs.append("".join(texts))
+        
+        tables = []
+        for tindex, tbl in enumerate(tree.iterfind(".//w:tbl", ns)):
+            rows = []
+            for tr in tbl.iterfind(".//w:tr", ns):
+                row = []
+                for tc in tr.iterfind(".//w:tc", ns):
+                    cell_texts = [t.text for t in tc.iterfind(".//w:t", ns) if t.text]
+                    row.append(" ".join(cell_texts))
+                if row:
+                    rows.append(row)
+            if rows:
+                tables.append({"id": f"p1-t{tindex+1}", "rows": rows, "bbox": [0, 0, 0, 0], "cells": []})
+        
+        full_text = "\n\n".join(paragraphs) if paragraphs else ""
+        if not full_text.strip() and not tables:
+            raise ValueError("No usable text or tables found in the Word document")
+        
+        # Split into logical pages if long (> 2500 chars), else single page
+        chunks = [full_text[i:i+2500] for i in range(0, max(len(full_text), 1), 2500)]
+        for idx, chunk_text in enumerate(chunks):
+            sec = next((l.strip() for l in chunk_text.splitlines() if l.strip()), f"Section {idx+1}")
+            page_tables = tables if idx == 0 else []
+            pages.append({
+                "number": idx + 1,
+                "text": chunk_text,
+                "section": sec,
+                "char_count": len(chunk_text),
+                "method": "docx · native text",
+                "warnings": [],
+                "tables": page_tables,
+                "chart_observations": []
+            })
+            if progress:
+                progress(idx + 1, len(chunks))
+    return pages
+
+
+def extract_txt(path: Path, progress=None):
+    pages = []
+    content = path.read_text(encoding="utf-8", errors="replace")
+    if not content.strip():
+        raise ValueError("Text file is empty")
+    chunks = [content[i:i+2500] for i in range(0, max(len(content), 1), 2500)]
+    for idx, chunk_text in enumerate(chunks):
+        sec = next((l.strip() for l in chunk_text.splitlines() if l.strip()), f"Page {idx+1}")
+        pages.append({
+            "number": idx + 1,
+            "text": chunk_text,
+            "section": sec,
+            "char_count": len(chunk_text),
+            "method": "txt · plain text",
+            "warnings": [],
+            "tables": [],
+            "chart_observations": []
+        })
+        if progress:
+            progress(idx + 1, len(chunks))
+    return pages
+
+
+def extract_json(path: Path, progress=None):
+    pages = []
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        data = json.loads(raw)
+    except Exception as exc:
+        raise ValueError(f"Invalid JSON format: {exc}") from exc
+    
+    tables = []
+    # If the JSON contains an array of tabular objects, extract as a table
+    if isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
+        headers = list(data[0].keys())
+        rows = [headers]
+        for item in data:
+            rows.append([str(item.get(h, "")) for h in headers])
+        tables.append({"id": "p1-t1", "rows": rows, "bbox": [0, 0, 0, 0], "cells": []})
+        formatted_text = json.dumps(data, indent=2)
+    elif isinstance(data, dict):
+        # Look for table structures or nested arrays
+        formatted_text = json.dumps(data, indent=2)
+        tcount = 1
+        for k, v in data.items():
+            if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+                hdrs = list(v[0].keys())
+                rws = [hdrs]
+                for item in v:
+                    rws.append([str(item.get(h, "")) for h in hdrs])
+                tables.append({"id": f"p1-t{tcount}", "rows": rws, "bbox": [0, 0, 0, 0], "cells": []})
+                tcount += 1
+    else:
+        formatted_text = str(data)
+
+    chunks = [formatted_text[i:i+2500] for i in range(0, max(len(formatted_text), 1), 2500)]
+    for idx, chunk_text in enumerate(chunks):
+        sec = next((l.strip() for l in chunk_text.splitlines() if l.strip()), f"Record {idx+1}")
+        pages.append({
+            "number": idx + 1,
+            "text": chunk_text,
+            "section": sec,
+            "char_count": len(chunk_text),
+            "method": "json · structured text",
+            "warnings": [],
+            "tables": tables if idx == 0 else [],
+            "chart_observations": []
+        })
+        if progress:
+            progress(idx + 1, len(chunks))
+    return pages
+
+
+def extract_document(path: Path, filename: str, progress=None):
+    ext = Path(filename).suffix.lower()
+    if ext == ".pdf":
+        return extract_pdf(path, progress)
+    elif ext in {".docx", ".doc"}:
+        return extract_docx(path, progress)
+    elif ext in {".txt", ".text", ".md", ".csv"}:
+        return extract_txt(path, progress)
+    elif ext == ".json":
+        return extract_json(path, progress)
+    else:
+        # Default attempt text extraction
+        return extract_txt(path, progress)
+
 
 
 def chart_observations(page, text):
