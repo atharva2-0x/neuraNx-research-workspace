@@ -196,16 +196,13 @@ def _compose_anthropic(question, passages, api_key=None):
         "Do not number lists. Do not introduce numeric tokens absent from the supplied passages. Put page numbers only in citation_pages. Return ONLY the JSON object, no markdown fencing or extra text."
     )
 
-    if api_key:
-        with httpx.Client(timeout=30) as client:
-            response=client.post("https://api.anthropic.com/v1/messages",headers={"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"},json={"model":model,"max_tokens":1000,"system":system_prompt,"messages":[{"role":"user","content":json.dumps({"question":question,"passages":passages})}]})
-            response.raise_for_status();response=response.json()
-        stop_reason=response.get("stop_reason")
-        content=response.get("content",[])
-    else:
-        import anthropic
-        response=anthropic.Anthropic(api_key=key,max_retries=0,timeout=30.0).messages.create(model=model,max_tokens=1000,system=system_prompt,messages=[{"role":"user","content":json.dumps({"question":question,"passages":passages})}])
-        stop_reason=response.stop_reason;content=[{"type":block.type,"text":block.text} for block in response.content if block.type=="text"]
+    # The lightweight Vercel runtime includes httpx, not the optional SDK.
+    # Use the same transport for server and request-scoped credentials.
+    with httpx.Client(timeout=30) as client:
+        response=client.post("https://api.anthropic.com/v1/messages",headers={"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"},json={"model":model,"max_tokens":1000,"system":system_prompt,"messages":[{"role":"user","content":json.dumps({"question":question,"passages":passages})}]})
+        response.raise_for_status();response=response.json()
+    stop_reason=response.get("stop_reason")
+    content=response.get("content",[])
     if stop_reason == "max_tokens":raise ValueError("LLM output exceeded token budget")
     raw_text = "".join(block.get("text","") for block in content if block.get("type") == "text").strip()
     # Strip markdown fencing if Claude wrapped the JSON

@@ -106,3 +106,23 @@ def test_vercel_api_forwards_request_credentials(monkeypatch):
         r=client.post('/chat/query',json={'document_id':meta['id'],'question':'NAV for 2025?',
             'provider':'anthropic','api_key':'test-browser-key-123456789'})
         assert r.status_code==200 and r.json()['llm']['used']
+
+
+@pytest.mark.parametrize('request_key',[None,'request-test-key'])
+def test_anthropic_transport_works_without_optional_sdk(monkeypatch,request_key):
+    import builtins
+    import httpx
+    monkeypatch.setenv('ANTHROPIC_API_KEY','server-test-key')
+    original_import=builtins.__import__
+    def no_sdk(name,*args,**kwargs):
+        if name=='anthropic':raise ModuleNotFoundError('SDK intentionally absent')
+        return original_import(name,*args,**kwargs)
+    monkeypatch.setattr(builtins,'__import__',no_sdk)
+    def post(client,url,**kwargs):
+        assert url=='https://api.anthropic.com/v1/messages'
+        assert kwargs['headers']['x-api-key']==(request_key or 'server-test-key')
+        return httpx.Response(200,request=httpx.Request('POST',url),json={
+            'stop_reason':'end_turn','content':[{'type':'text','text':'{"answer":"NAV 192.9","citation_pages":[9]}'}]})
+    monkeypatch.setattr(httpx.Client,'post',post)
+    answer=provider._compose_anthropic('NAV?', [{'page':9,'content':'NAV 192.9'}],api_key=request_key)
+    assert answer.answer=='NAV 192.9'
