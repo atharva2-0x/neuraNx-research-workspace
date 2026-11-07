@@ -1,146 +1,373 @@
-# Fund Intelligence
+# NeuraNx DMS — RAG-Powered Document Management Chatbot
 
-A Python financial document research workspace for the NeuraNX DMS chatbot assignment. Upload a PDF, inspect its performance tables, ask questions, and follow an answer back to the original page. The interface includes persistent light and dark themes, responsive navigation, a NAV chart with a clearly separated forecast region, and an evidence drawer.
+A Python-based chatbot for a **Document Management System (DMS)** using **Retrieval-Augmented Generation (RAG)**. Supports **Anthropic Claude** and **OpenAI GPT** as LLM providers, with local or OpenAI embeddings, and PostgreSQL + pgvector for vector storage.
 
-[Live application](https://neuranx-fund-intelligence.vercel.app/) · [HTML presentation](https://neuranx-fund-intelligence.vercel.app/deck.html)
+---
 
-Vercel serves the interface and forwards API requests to an OCI server through a Cloudflare demo tunnel. Hosted uploads use private browser workspaces (4 MB, 200 pages, 10 reports per workspace); clearing browser cookies loses access. Original PDFs and extracted evidence persist on the OCI disk. The shared fictional sample is read-only. Export findings opens a formatted report with Print / Save PDF and Download HTML. See [deployment notes](deployment/README.md).
+## Architecture Overview
 
-## Assignment status
-
-Document upload, structured extraction, persisted knowledge storage, and a document-grounded chatbot interface are implemented. **The live demo does not yet fully satisfy the assignment:** embeddings/vector search and LLM generation are disabled. Provider and PostgreSQL/pgvector adapters exist in the local application but have not been verified against live services. To complete requirements 4–5, configure a provider key, enable both flags, run PostgreSQL/pgvector, and verify end-to-end retrieval and generation; deploy that database-backed pipeline if these features must work on the public URL. The hosted lightweight API currently stores JSON evidence and uses BM25, so enabling an embedding flag alone does not deploy pgvector.
-
-## Technology
-
-Python, FastAPI, Uvicorn, Pydantic, SQLAlchemy, SQLite; optional PostgreSQL/pgvector and OpenAI provider adapters; pdfplumber/PDFium; BM25 and Decimal arithmetic; HTML/CSS/vanilla JavaScript/SVG; Vercel, OCI, Cloudflare tunnel, systemd; pytest and Docker Compose.
-
-The supplied **ABC Company Fund** report is fictional. Source values, derived calculations, and unresolved discrepancies are kept separate.
-
-## Run locally
-
-Python 3.11 or newer is required; Python 3.12 is recommended for PDF library compatibility.
-
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev]'
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Web UI (Vanilla JS)                      │
+│  Upload PDF  │  Browse Documents  │  Chat / Ask Questions       │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ REST API
+┌──────────────────────────▼──────────────────────────────────────┐
+│                    FastAPI Backend (Python)                      │
+│                                                                 │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
+│  │  PDF Upload  │  │  Extraction  │  │   RAG Pipeline         │ │
+│  │  & Ingestion │→ │  pdfplumber  │→ │  BM25 + Vector Search  │ │
+│  └─────────────┘  │  + Tesseract │  │  + LLM (Claude / GPT)  │ │
+│                    └──────────────┘  └────────────────────────┘ │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Embeddings (choose one):                                 │  │
+│  │   • local: BAAI/bge-small-en-v1.5, 384-dim, CPU, no key  │  │
+│  │   • openai: text-embedding-3-small, 1536-dim, API key     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│         PostgreSQL 16 + pgvector (Docker container)             │
+│  • Documents, facts, chunks, validation findings                │
+│  • HNSW vector index for cosine similarity search               │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-Open [the workspace](http://127.0.0.1:8000) or [interactive API documentation](http://127.0.0.1:8000/docs).
+## Features
 
-The supplied PDF has been copied into `data/input/`, which is excluded from version control. On startup, new PDFs in that folder are ingested automatically. Alternatively, use **Add report** in the UI. No provider account or API key is needed for the offline demo.
+| Requirement | Implementation |
+|---|---|
+| **Document Upload** | PDF upload via web UI or API; validates format, size (≤25 MB), page count (≤200) |
+| **Document Extraction & Structuring** | pdfplumber extracts text, tables, geometry; Tesseract OCR for scanned pages; structured facts with source provenance |
+| **Knowledge Base Creation** | Facts, chunks, and validation findings stored in PostgreSQL with full audit trail |
+| **Embedding Model + Vector DB** | Local BGE-small (384-dim) or OpenAI (1536-dim) + PostgreSQL pgvector with HNSW index |
+| **RAG with LLM** | Hybrid retrieval (BM25 keyword + vector cosine) → Anthropic Claude or OpenAI GPT for evidence-grounded answers |
+| **Chatbot Interface** | Web UI with chat panel, suggested prompts, source citations, and evidence drawer |
 
-If you clone this project elsewhere, add the PDF yourself; source files and generated extraction records are deliberately not committed. To ingest explicitly:
+## Tech Stack
 
-```sh
-python -m app.ingest data/input/ABC_Company_Fund_Performance_Report_50_Pages.pdf
-# Re-run the parser and validation rules against the retained original:
-python -m app.ingest data/input/ABC_Company_Fund_Performance_Report_50_Pages.pdf --reprocess
+- **Backend**: Python 3.12, FastAPI, SQLAlchemy 2.x
+- **LLM**: Anthropic Claude (default) *or* OpenAI GPT — switchable via `LLM_PROVIDER`
+- **Embeddings**: Local BGE-small via fastembed (default) *or* OpenAI — switchable via `EMBEDDING_PROVIDER`
+- **Vector DB**: PostgreSQL 16 + pgvector (HNSW index, cosine similarity)
+- **PDF Processing**: pdfplumber + Tesseract OCR (optional)
+- **Frontend**: Vanilla HTML/CSS/JS with responsive design, dark mode
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Docker** and **Docker Compose** (v2)
+- **Anthropic API Key** (https://console.anthropic.com/) *or* **OpenAI API Key** (https://platform.openai.com/)
+
+### 1. Clone and configure
+
+```bash
+cd neuraNx-research-workspace
 ```
 
-Reprocessing replaces normalized records and resets finding review states; it preserves the uploaded PDF. Identical uploads reuse the document checksum and do not duplicate facts.
+Edit `.env` and add your API key. For **Anthropic** (default):
 
-## What is implemented
-
-- PDF signature, type, 25 MB size, encryption/readability, and 200-page limit checks.
-- Background ingestion with progress, visible failure state, explicit retry, and checksum deduplication.
-- Page text, original PDF, tables, individual cell coordinates, raw numeric tokens, source filenames, and extraction methods retained.
-- Typed annual, quarterly, allocation, and forecast observations. The table adapters match headers instead of assuming fixed page numbers.
-- Decimal arithmetic for benchmark gaps, NAV growth, CAGR, and periodic return compounding, with persisted formulas and inputs.
-- Checks for NAV/return mismatch, contradictory quarterly versions, quarterly NAV continuity, annual/quarterly reconciliation, simple-sum conventions, distribution totals, unresolved currency glyphs, repeated observations, and native chart geometry.
-- Structured numeric routing, page-aware BM25 narrative retrieval, explicit clarification for ambiguous quarterly questions, and unsupported-question handling.
-- Optional embedding search and evidence-constrained LLM explanations behind environment flags. Default operation is deterministic and offline.
-- SQLite for the local demo, or PostgreSQL through Docker Compose; normalized facts, chunks, findings, calculations, and query telemetry have separate tables.
-- Source-page images, raw extraction inspection, persistent finding review states, and a complete JSON evidence export.
-- Request IDs and structured request telemetry. Query logs store route, page IDs, and timing, without question text or secrets.
-
-## Verified against the supplied PDF
-
-The current extraction yields **50 pages, 49 tables, 346 observations, and 13 findings**. The findings comprise eight warnings and five informational notes. Each repeated observation keeps its own provenance.
-
-- Page 9 reports the 2025 NAV of **192.9**, return of **15.6%**, and benchmark return of **13.4%**. The deterministic benchmark gap is **2.20 percentage points**.
-- Page 5 reports a 2021 return of **18.0%**, while NAV moves from **100.0** on page 4 to **112.0** on page 5: an implied **12.00%** change. The report does not explain a reconciliation.
-- The 2025 quarterly pages 16, 19, 22, and 25 have four different Q4 closing values: **194.7, 192.5, 194.0, and 195.5**. None equals the annual-section NAV of **192.9**. All versions are shown.
-- The quarterly inputs **3.1%, 5.2%, 4.7%, 2.8%** compound to **16.7385249392%**, rounded to **16.74%**; their sum is **15.8%**. The PDF explicitly labels its full-year total as a simple sum, so this convention is reported as a note rather than a source arithmetic error.
-- The forecast chart’s highest labeled tick is **360**, but its axis extends to approximately **450**. The **390.3** forecast is within the chart range. Comparing the table only to the highest tick would produce a false discrepancy.
-- The currency glyph is a square in the original PDF and a dingbat `n` in extracted text. The application retains **NAV units** and **crore**, and does not guess INR or another currency.
-
-These verified observations supersede approximate or illustrative examples in the supplied planning documents.
-
-## Architecture and trade-offs
-
-The browser UI and FastAPI run as one application. Uploads enter a background pipeline: extract → normalize → validate → index → persist. Numeric questions read typed source observations and use Python `Decimal`. Narrative questions retrieve bounded passages with page metadata. The answer layer attaches existing provenance and relevant warnings.
-
-The implementation deliberately uses a custom HTML/CSS/JavaScript interface instead of the plan’s suggested Streamlit interface, to support the requested visual design and both themes. It uses pdfplumber plus PDFium for table extraction, native text/geometry inspection, and page rendering. PyMuPDF is available as an optional dependency rather than required for this report.
-
-The default database is SQLite to make the interview demo easy to run. SQLAlchemy supplies the same repository models for PostgreSQL. Numeric values use a `NUMERIC` column and preserve their original token in a separate JSON evidence record. Full page artifacts remain available for audit and parser improvements.
-
-The offline narrative path is **BM25 keyword retrieval**, not neural semantic search. It displays relevant source passages rather than claiming an LLM generated an answer. Optional embeddings use cosine ranking locally, and a true pgvector HNSW index with document-filtered cosine-distance search on PostgreSQL. No vector path is claimed to be tested against a live provider in this setup.
-
-Documents and questions are treated as untrusted input. The model composer has no tools, receives bounded evidence, uses a strict response schema, and rejects citations or numeric tokens absent from the evidence. These checks constrain output but do not prove that a model paraphrase is entailed. A production deployment still needs evaluation and human review for material decisions.
-
-## Optional provider configuration
-
-Copy `.env.example` to `.env`, supply your own `OPENAI_API_KEY`, and enable the capabilities you want:
-
-```dotenv
-ENABLE_LLM=true
-ENABLE_EMBEDDINGS=true
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+```env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 ```
 
-These options send selected document passages to OpenAI and may incur API costs. They remain disabled by default. Numeric lookups and arithmetic stay deterministic even when the explanation provider is enabled. Provider failures fall back to source passages with an explicit warning. Embeddings are generated lazily on the first narrative query and persisted for subsequent queries. An embedding failure falls back to BM25.
+Or for **OpenAI**:
 
-The adapter follows the official [Responses structured-output guide](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses) and [Embeddings API](https://developers.openai.com/api/reference/resources/embeddings/methods/create). Model access depends on your provider account. Live provider calls have not been exercised here.
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-your-key-here
+# If also using OpenAI embeddings instead of local:
+EMBEDDING_PROVIDER=openai
+```
 
-## Docker and PostgreSQL
+### 2. Start with Docker Compose (recommended)
 
-```sh
+```bash
 docker compose up --build
 ```
 
-This starts the app and PostgreSQL with pgvector. The app binds to loopback on your computer; source files and extracted artifacts persist under `data/`. The container includes Tesseract for scanned-page fallback. The database credentials in Compose are local development defaults. Docker execution has not been verified on this machine.
+This starts:
+- **PostgreSQL 16 + pgvector** on port 5432
+- **FastAPI application** on http://localhost:8000
 
-## Tests and evaluation
+Open **http://localhost:8000** in your browser.
 
-```sh
-python -m pytest -q -p no:asyncio
+### 3. Upload a document and chat
+
+1. Click **"Add report"** in the UI
+2. Upload any PDF document (up to 25 MB, up to 200 pages)
+3. Wait for extraction to complete (progress bar shown)
+4. Navigate to **"Ask the report"** tab
+5. Type questions or use suggested prompts
+6. Answers come with source citations you can click to verify
+
+---
+
+## Local Development (without Docker)
+
+### Prerequisites
+
+- Python 3.11+
+- PostgreSQL 16 with pgvector extension (or use the Docker DB)
+
+### Option A: Use Docker only for PostgreSQL
+
+```bash
+# Start just the database
+docker compose up db -d
+
+# Install Python dependencies
+pip install -e ".[dev]"
+
+# Run the server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Option B: Full local setup
+
+```bash
+# 1. Install PostgreSQL 16 with pgvector extension
+# macOS: brew install postgresql@16 && brew install pgvector
+# Ubuntu: sudo apt install postgresql-16-pgvector
+
+# 2. Create database
+createdb fund
+psql fund -c "CREATE EXTENSION vector;"
+
+# 3. Set DATABASE_URL in .env
+# DATABASE_URL=postgresql+psycopg://youruser:yourpass@localhost:5432/fund
+
+# 4. Install dependencies
+pip install -e ".[dev]"
+
+# 5. Run
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### SQLite fallback (no PostgreSQL needed)
+
+For quick testing without PostgreSQL (vector search uses in-memory cosine):
+
+```bash
+# In .env, set:
+DATABASE_URL=sqlite:///data/fund.db
+
+pip install -e .
+uvicorn app.main:app --reload
+```
+
+---
+
+## Provider Configuration
+
+### LLM Provider
+
+| Setting | `LLM_PROVIDER=anthropic` (default) | `LLM_PROVIDER=openai` |
+|---|---|---|
+| API Key env var | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` |
+| Model env var | `ANTHROPIC_MODEL` | `OPENAI_MODEL` |
+| Default model | `claude-sonnet-4-20250514` | `gpt-4.1-mini` |
+
+### Embedding Provider
+
+| Setting | `EMBEDDING_PROVIDER=local` (default) | `EMBEDDING_PROVIDER=openai` |
+|---|---|---|
+| Model | BAAI/bge-small-en-v1.5 (fastembed) | text-embedding-3-small |
+| Dimensions | 384 | 1536 |
+| API Key needed | No (runs on CPU) | Yes (`OPENAI_API_KEY`) |
+
+> **Note:** If you switch embedding providers after documents have been indexed, drop the `semantic_vectors` table and re-upload documents so vectors are regenerated with the new dimensions.
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Health check (DB connectivity) |
+| `GET` | `/documents` | List all uploaded documents |
+| `POST` | `/documents/upload` | Upload a PDF document |
+| `GET` | `/documents/{id}` | Get document metadata |
+| `GET` | `/documents/{id}/overview` | Full document overview with facts |
+| `GET` | `/documents/{id}/metrics` | Query extracted metrics/facts |
+| `GET` | `/documents/{id}/validation` | Data quality findings |
+| `GET` | `/documents/{id}/pages/{n}` | Get page-level extraction data |
+| `GET` | `/documents/{id}/pages/{n}/image` | Render page as PNG |
+| `GET` | `/documents/{id}/file` | Download original PDF |
+| `POST` | `/chat/query` | **Ask a question about a document** |
+| `POST` | `/documents/{id}/retry` | Retry failed extraction |
+
+### Chat API Example
+
+```bash
+curl -X POST http://localhost:8000/chat/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_id": "your-document-id",
+    "question": "What are the key findings in this document?"
+  }'
+```
+
+Response includes:
+- `answer` — evidence-grounded response
+- `sources` — page references with excerpts
+- `calculations` — any deterministic calculations performed
+- `warnings` — data quality caveats
+- `query_type` — routing method (structured/semantic/hybrid)
+
+---
+
+## How the RAG Pipeline Works
+
+### 1. Document Ingestion
+```
+PDF Upload → Page Extraction (pdfplumber) → Table Normalization
+           → Fact Structuring → Validation Checks → Chunk Indexing
+           → Vector Embedding (local or OpenAI) → pgvector Storage
+```
+
+### 2. Query Processing
+```
+User Question → Intent Classification (regex-based routing)
+             → Structured Lookup (for numeric/metric queries)
+             → BM25 Keyword Retrieval (for semantic queries)
+             → Vector Similarity Search (pgvector cosine)
+             → Passage Fusion (hybrid ranking)
+             → LLM Composition (Claude or GPT, evidence-constrained)
+             → Citation Validation → Response
+```
+
+### 3. Answer Safety
+- The LLM is instructed to answer **only** from supplied passages
+- Citation pages are validated against actual source pages
+- New numeric values not present in evidence are rejected
+- Forecasts and synthetic data are disclosed with warnings
+
+---
+
+## All Configuration Variables
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///data/fund.db` | Database connection string |
+| `LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `openai` |
+| `EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` or `openai` |
+| `ANTHROPIC_API_KEY` | *(required for Anthropic)* | Anthropic API key |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Claude model |
+| `OPENAI_API_KEY` | *(required for OpenAI)* | OpenAI API key |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | GPT model |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `OPENAI_EMBEDDING_DIM` | `1536` | OpenAI embedding dimensions |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Local embedding model name |
+| `EMBEDDING_DIM` | `384` | Local embedding dimensions |
+| `ENABLE_LLM` | `true` | Enable LLM answer composition |
+| `ENABLE_EMBEDDINGS` | `true` | Enable vector search |
+| `MAX_UPLOAD_MB` | `25` | Maximum PDF upload size |
+| `DATA_DIR` | `data` | Directory for PDFs and processed output |
+
+---
+
+## Project Structure
+
+```
+neuraNx-research-workspace/
+├── app/
+│   ├── main.py           # FastAPI application, routes, lifespan
+│   ├── provider.py        # Multi-provider LLM + embedding abstraction
+│   ├── vector.py          # pgvector semantic search (384 or 1536-dim)
+│   ├── hosted_vector.py   # Hosted pgvector with fastembed (legacy)
+│   ├── retrieval.py       # BM25 keyword retrieval + cosine utils
+│   ├── answering.py       # Query routing and answer composition
+│   ├── extraction.py      # PDF text/table extraction (pdfplumber)
+│   ├── pipeline.py        # Ingestion pipeline orchestration
+│   ├── db.py              # SQLAlchemy models and database setup
+│   ├── models.py          # Pydantic schemas (Fact, Source, Query)
+│   ├── validation.py      # Data quality checks
+│   ├── calculations.py    # Decimal-safe arithmetic
+│   └── ingest.py          # CLI ingestion entry point
+├── ui/
+│   ├── index.html         # Single-page application shell
+│   ├── app.js             # Client-side rendering and state
+│   └── style.css          # Responsive design with dark mode
+├── tests/
+│   ├── conftest.py
+│   ├── test_core.py
+│   └── test_api.py
+├── docker-compose.yml     # PostgreSQL (pgvector) + App
+├── Dockerfile
+├── pyproject.toml
+├── requirements.txt
+├── .env                   # Configuration (add your API key here)
+└── README.md
+```
+
+---
+
+## Running Tests
+
+```bash
+pip install -e ".[dev]"
+pytest -v
+```
+
+---
+
+## License
+
+This project was developed as a technical assessment for NeuraNx.ai.
+
+## Chat quality checks
+
+Chat responses support safe Markdown headings, lists and comparison tables. Quarterly
+answers retain each conflicting source version in its own row, with arithmetic in
+an expandable section. **New chat** clears the active document’s conversation.
+Relative requests such as “last two years” use the latest historical dates in the
+uploaded report, rather than today’s date or forecast years. Semantic paraphrases
+can reach the configured model without requiring literal keyword overlap.
+
+Run the source-labelled financial regression suite after ingesting the supplied
+ABC Company Fund sample into the database used by the command:
+
+```bash
 python -m scripts.evaluate_questions
 ```
 
-The test suite covers normalization, source immutability, units and geometry, Decimal calculations, retrieval provenance, the real report’s known facts, all conflicting quarterly versions, unsupported requests, provider fallback, upload validation, new and duplicate uploads, document isolation, API behavior, source rendering, persisted review state, and evidence exports.
+The command disables paid model and embedding calls by default. It writes
+`output/evaluation.json` with per-case results and these separate metrics:
 
-Real-report integration tests use the PDF under `data/input/`. They are explicitly skipped if it is missing. Core tests are self-contained. The optional `-p no:asyncio` disables an unrelated globally installed test plugin that emits Python 3.14 deprecation warnings.
+- Citation precision and recall against manually verified relevant pages.
+- Answer accuracy as coverage of expected source-verified claims.
+- Raw BM25 page precision and recall at up to four retrieved chunks, measured
+  before structured routing and final citation selection.
 
-The evaluation script writes a machine-readable result to `output/evaluation.json`. See [the interview walkthrough](docs/INTERVIEW_GUIDE.md) for a five-minute demo and deployment discussion.
+The BM25 metric is a baseline across the labelled questions, including questions
+answered by structured lookup; it is not the hybrid pipeline’s overall precision.
+Expected-claim coverage does not measure every possible unsupported statement.
+Use `python -m scripts.evaluate_questions --live` to explicitly evaluate the
+configured providers (may incur provider charges). Run `pytest -q` for isolated
+regressions, including relative dates, quarterly versions and paraphrased retrieval.
 
-## API
+### Dashboard motion and conversation history
 
-- `POST /documents/upload` — multipart PDF upload; returns a document ID and ingestion state.
-- `GET /documents` — available documents.
-- `GET /documents/{id}` and `/status` — document state and progress.
-- `GET /documents/{id}/overview` — UI summary with underlying observations.
-- `GET /documents/{id}/metrics` — facts; optional `metric`, `period`, and `classification` filters.
-- `GET /documents/{id}/validation` — findings and source links.
-- `PATCH /documents/{id}/validation/{issue}` — mark reviewed or reopen; never changes source values.
-- `GET /documents/{id}/pages/{n}` and `/image` — raw extraction and original-page rendering.
-- `GET /documents/{id}/file` and `/export` — original PDF and JSON evidence report.
-- `POST /documents/{id}/retry` — retry failed extraction.
-- `POST /chat/query` — `{ "document_id": "…", "question": "…" }`.
-- `GET /health` — database connectivity and pipeline version.
+The first overview visit for each report in a page session reveals the NAV series,
+animates the allocation bars, and rolls the headline numbers into their reported
+values. Reduced-motion preferences show the final values immediately.
 
-## Current limits and production path
+The chat workspace keeps conversations in a right-hand history pane (a horizontal
+history list on phones). New chat preserves previous conversations. History is
+saved in this browser’s local storage, separated by document; it is not synced
+between devices. Fast responses have a one-second minimum presentation time, with
+one API request per question and no artificial delay added to slower responses.
+Source notes remain available in an expandable section below each answer.
 
-The local application should remain bound to `127.0.0.1`. The hosted interview demo uses cookie-based browser isolation, rather than user accounts. A customer deployment needs authentication, per-tenant authorization on every document query, encryption/retention policies, rate limits, durable jobs, and operational monitoring.
+Run the browser-state checks without a browser installation or paid requests:
 
-FastAPI background tasks are not a durable queue. If the app stops during ingestion, the next startup marks that job as interrupted and offers retry from the retained original. Move ingestion to a durable worker when concurrent customer workloads justify it.
-
-Extraction adapters are validated for this report’s table layouts. Other layouts may yield narrative text without structured facts; the app does not invent the missing records. Native PDF labels and vector geometry support this report’s chart cross-check. Arbitrary raster chart understanding, numeric pie-slice measurement, and robust multi-column OCR are not claimed. On low-text pages, Tesseract is used only if installed; otherwise the page is flagged. Tesseract is not installed in the current local environment, and the supplied report does not require it.
-
-No confidential source data is published or uploaded to a provider in the default configuration. Uploaded files, the database, and extraction artifacts are excluded from version control.
-
-## Design credit
-
-UI craft guidance: [Unslop](https://github.com/heydamir/unslop), created by Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), CC BY 4.0. The project follows the approved research-workspace direction with quiet neutral surfaces, one chart accent, tabular figures, evidence references, and matched themes.
+```bash
+node --test tests/ui.test.cjs
+```

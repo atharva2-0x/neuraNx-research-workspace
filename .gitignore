@@ -13,4 +13,5 @@ deployment/.secrets/
 deploy/
 
 
+*.egg-info/
 public/

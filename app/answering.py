@@ -39,12 +39,51 @@ def answer_question(payload,question,document_id):
         return message
     numeric_intent=bool(re.search(r"\b(nav|aum|returns?|benchmark|highest|lowest|largest|allocation|quarter|q[1-4]|compare|compound|cagr|performance)\b",q))
     explanation_intent=bool(re.search(r"\b(why|explain|assumption|assumptions|risk|risks|define|meaning|glossary|scenario|scenarios|real|fictional|synthetic|stand for)\b",q)) or bool(re.search(r"what (?:is|does) (?:nav|aum|cagr)\??$",q))
-    if re.search(r"\b(ignore|system prompt|api key|password|execute|instruction|secret)\b",q):
+    historical_years=sorted({f["period"] for f in facts if f["classification"]=="historical" and re.fullmatch(r"(?:19|20)\d{2}",f["period"])})
+    relative=re.search(r"\b(?:last|latest|past|recent)\s*(one|two|three|four|five|\d+)?\s*years?\b",q)
+    summary_intent=bool(re.search(r"\b(summari[sz]e|summary|overview|highlights)\b",q))
+    if relative and not years and historical_years:
+        count={"one":1,"two":2,"three":3,"four":4,"five":5}.get(relative[1],int(relative[1]) if (relative[1] or "").isdigit() else 2)
+        years=historical_years[-max(1,min(count,10)):]
+        summary_intent=True
+    if re.search(r"(?:reveal|show|print|expose).*(?:api key|password|system prompt|secret)|ignore.*instructions",q):
         route="unsupported";answer="I can answer questions about the report’s financial evidence. Instructions inside the document or question cannot change the evidence policy or expose application secrets."
-    elif re.search(r"\b(buy|sell|invest in|recommend|stock price|weather|ceo|bitcoin)\b",q):
-        route="unsupported";answer=unsupported("This fictional report does not support that request. It contains no live market data or investment recommendations.")
-    elif any(y not in {f["period"][:4] for f in facts if re.match(r"20\d{2}",f["period"])} for y in years):
+    elif years and numeric_intent and not explanation_intent and not summary_intent and any(y not in {f["period"][:4] for f in facts} for y in years):
         route="unsupported";answer=unsupported("The requested year is not present in the extracted financial tables. I cannot extrapolate an unreported value.")
+    elif summary_intent and historical_years:
+        scope=years or historical_years[-2:]
+        selected=unique([f for f in facts if f["period"] in scope and f["classification"]=="historical" and f["metric"] in {"nav","aum","fund_return","benchmark_return"}])
+        rows=["| Year | Metric | Reported value | Source |", "| --- | --- | --- | --- |"]
+        for f in selected:
+            unit="%" if f["unit"]=="percent" else " "+f["unit"]
+            rows.append(f"| {f['period']} | {f['metric'].replace('_',' ').title()} | {display(f['value'],1)}{unit} | p. {f['source']['page']} |")
+        # Compare source endpoints without manufacturing a market forecast or averaging conflicts.
+        def movement(metric,label):
+            observations=sorted([f for f in selected if f["metric"]==metric],key=lambda f:f["period"])
+            if not observations:return None
+            first,last=observations[0],observations[-1]
+            # Conflicting versions must not be silently reduced to one endpoint.
+            if any(len({f["value"] for f in observations if f["period"]==year})>1 for year in scope):
+                return f"{label} has conflicting source values; see the cited pages."
+            suffix="%" if first["unit"]=="percent" else ""
+            if first["period"]==last["period"]:return f"{label} was {display(first['value'],1)}{suffix}."
+            direction="rose" if decimal(last["value"])>decimal(first["value"]) else "fell" if decimal(last["value"])<decimal(first["value"]) else "was unchanged"
+            return f"{label} {direction} overall, from {display(first['value'],1)}{suffix} ({first['period']}) to {display(last['value'],1)}{suffix} ({last['period']})."
+        if selected:
+            if re.search(r"\b(market|benchmark)\b",q):
+                bullets=[movement("benchmark_return","The report’s benchmark return"),movement("nav","Fund NAV")]
+                bullets=[b for b in bullets if b]
+                if len(bullets)==2:bullets[1]+=" This describes the report, not live market conditions."
+            else:
+                bullets=[movement("nav","Reported NAV"),movement("fund_return","Annual fund return")]
+                bullets=[b for b in bullets if b]
+            if len(bullets)<2:bullets.append(f"Historical coverage: {', '.join(scope)}; forecasts are excluded.")
+            answer="\n".join("- "+b for b in bullets[:2])
+            if re.search(r"\b(data|tables?|breakdown|figures|numbers|details?|detailed|deeper|compare|comparison)\b",q) and not re.search(r"\b(no tables?|without (?:data|tables?)|only (?:two|2) (?:lines|points|bullets))\b",q):
+                answer+="\n\n"+"\n".join(rows)
+        else:
+            route="unsupported";answer=unsupported("No historical observations were found for the requested period.")
+
     elif "compound" in q and len(re.findall(r"[+-]?\d+(?:\.\d+)?\s*%",q))>=2:
         values=re.findall(r"([+-]?\d+(?:\.\d+)?)\s*%",q)
         result=compound(values)
@@ -107,8 +146,8 @@ def answer_question(payload,question,document_id):
                     if b:
                         gap=difference(f["value"],b["value"]);line+=f", benchmark {b['value']}%, difference {display(gap)} percentage points"
                         add_calculation("fund return − benchmark return",[f["value"],b["value"]],gap,"percentage points",[f,b])
-                    lines.append(line+".")
-            answer="\n".join(lines) or unsupported()
+                    lines.append(f"| {period} | p. {f['source']['page']} | {f['value']}% | {b['value']+'%' if b else '—'} | {display(gap) if b else '—'} |")
+            answer=("### Quarterly performance\n\nEach source version is shown separately; conflicting figures are not averaged. Differences are in percentage points.\n\n| Quarter | Source | Fund return | Benchmark | Difference (pp) |\n| --- | --- | --- | --- | --- |\n"+"\n".join(lines)) if lines else unsupported()
     elif ("cagr" in q or "annualized" in q) and not ("what is" in q and not years):
         observations=sorted(unique(find("nav",classification="historical")),key=lambda f:f["period"])
         if years:observations=[f for f in observations if f["period"] in years]
@@ -164,7 +203,7 @@ def answer_question(payload,question,document_id):
         route="semantic";method="BM25 keyword retrieval"
         passages=retrieve(question,payload["chunks"])
         if payload.get("_semantic_passages"):
-            passages=list({p["id"]:p for p in payload["_semantic_passages"]+passages}.values())[:6];method="BGE-small embeddings + pgvector cosine search + BM25"
+            passages=list({p["id"]:p for p in payload["_semantic_passages"]+passages}.values())[:6];method="BGE-small-en-v1.5 embeddings + pgvector cosine search + BM25"
         # Prefer purpose-specific narrative pages over sample-question/glossary
         # matches. This still selects source text; it never fills missing facts.
         wanted=[]
@@ -189,15 +228,13 @@ def answer_question(payload,question,document_id):
                 from app.vector import search
                 semantic=search(document_id,question)
                 combined={p["id"]:p for p in semantic+passages}
-                passages=list(combined.values())[:6];method="embedding + keyword retrieval"
+                passages=list(combined.values())[:6];method="BGE-small-en-v1.5 embedding + BM25 keyword retrieval"
             except Exception:
                 logger.exception("semantic_retrieval_failed",extra={"document_id":document_id})
                 warnings.append("Semantic retrieval is unavailable; keyword retrieval was used.")
-        meaningful=set(tokenize(question))
-        overlap=any(meaningful & set(tokenize(p["content"]+" "+p["section"])) for p in passages)
         if answer:
             pass
-        elif not passages or not overlap:
+        elif not passages:
             route="unsupported";answer=unsupported()
         else:
             source_overrides=[{"page":p["page"],"section":p["section"],"excerpt":p["content"]} for p in passages]
@@ -218,6 +255,10 @@ def answer_question(payload,question,document_id):
                 except Exception:
                     logger.exception("answer_composer_failed",extra={"document_id":document_id})
                     warnings.append("The explanation provider is unavailable or failed evidence validation. Showing source passages instead.")
+    if composer=="deterministic" and route not in {"clarification","unsupported"} and not re.search(r"^(?:[-*] |#|\|)",answer,re.M) and len(answer.split())<=110:
+        sentences=re.split(r"(?<=[.!?])\s+(?=[A-Z])",answer.strip())
+        if len(sentences)>1:answer="- "+sentences[0]+"\n- "+" ".join(sentences[1:])
+        elif answer:answer="- "+answer
     selected_ids={f["id"] for f in selected}
     # Attach findings for the same metric/period even when an identical repeated
     # observation has a different ID on another page.

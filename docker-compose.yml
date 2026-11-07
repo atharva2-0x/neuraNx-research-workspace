@@ -6,11 +6,22 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://fund:fund-local@db:5432/fund
       DATA_DIR: /app/data
-      ENABLE_LLM: ${ENABLE_LLM:-false}
-      ENABLE_EMBEDDINGS: ${ENABLE_EMBEDDINGS:-false}
+      ENABLE_LLM: ${ENABLE_LLM:-true}
+      ENABLE_EMBEDDINGS: ${ENABLE_EMBEDDINGS:-true}
+      # Provider selection
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      # Anthropic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
+      # OpenAI
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_EMBEDDING_DIM: ${OPENAI_EMBEDDING_DIM:-1536}
+      # Local embeddings
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
     volumes:
       - ./data:/app/data
     depends_on:
@@ -23,6 +34,8 @@ services:
       retries: 3
   db:
     image: pgvector/pgvector:pg16
+    ports:
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: fund
       POSTGRES_USER: fund
