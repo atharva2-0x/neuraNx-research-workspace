@@ -163,6 +163,8 @@ def answer_question(payload,question,document_id):
     else:
         route="semantic";method="BM25 keyword retrieval"
         passages=retrieve(question,payload["chunks"])
+        if payload.get("_semantic_passages"):
+            passages=list({p["id"]:p for p in payload["_semantic_passages"]+passages}.values())[:6];method="BGE-small embeddings + pgvector cosine search + BM25"
         # Prefer purpose-specific narrative pages over sample-question/glossary
         # matches. This still selects source text; it never fills missing facts.
         wanted=[]

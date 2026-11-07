@@ -12,6 +12,7 @@ import pdfplumber
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from app.answering import answer_question
+from starlette.concurrency import run_in_threadpool
 from app.extraction import extract_pdf, normalize, summarize
 from app.validation import validate
 from app.retrieval import chunks_from_pages
@@ -20,7 +21,7 @@ ROOT=Path(__file__).resolve().parents[1]
 SEED=json.loads((ROOT/'evidence.json').read_text())
 STORE=ROOT/'private-data'
 STORE.mkdir(mode=0o700,exist_ok=True)
-LOCK=threading.BoundedSemaphore(2)
+LOCK=threading.BoundedSemaphore(1)
 app=FastAPI()
 
 def workspace(request):
@@ -53,6 +54,10 @@ def process(path,record):
             title=pages[0]['section'][:160]
             synthetic=any('fictional' in p['text'].lower() or 'synthetic' in p['text'].lower() for p in pages[:3])
             payload={'title':title,'pages':pages,'facts':facts,'issues':issues,'assumptions':assumptions,'chunks':chunks_from_pages(pages),'synthetic':synthetic,**summarize(facts),'nav_unit':'NAV units · See source for currency','extraction_warnings':warnings,'extraction':{'stages':[{'name':'Extract and preserve evidence','description':'Original PDF, text, table cells, and coordinates retained','duration_ms':0},{'name':'Normalize and validate','description':'Source facts preserved independently of calculated findings','duration_ms':0}],'retrieval_description':'BM25 keyword retrieval over this report’s page-aware passages.','ocr_description':'Low-text pages are flagged when OCR is unavailable.'}}
+            if os.getenv('HOSTED_VECTORS')=='true':
+                from app.hosted_vector import index
+                meta.update(stage='Embedding and indexing passages',progress=85);save(path,record)
+                index(path.parent.name,meta['id'],payload['chunks'])
             meta.update(status='completed',stage='Ready',progress=100,page_count=len(pages),fact_count=len(facts),issue_count=len(issues),table_count=sum(len(p['tables']) for p in pages),synthetic=synthetic)
             record['payload']=payload;save(path,record)
         except Exception as exc:
@@ -89,7 +94,14 @@ async def route(path:str,request:Request,tasks:BackgroundTasks):
         body=await request.json();record,_=load(request,body.get('document_id',''));question=body.get('question','')
         if not isinstance(question,str) or not 2<=len(question.strip())<=2000:raise HTTPException(422,'Enter a question between 2 and 2000 characters')
         if record['metadata']['status']!='completed':raise HTTPException(409,'The report is still processing')
-        return answer_question(record['payload'],question,record['metadata']['id'])
+        def respond():
+            payload=dict(record['payload'])
+            if os.getenv('HOSTED_VECTORS')=='true':
+                from app.hosted_vector import search
+                tenant='shared' if record['metadata']['id']==SEED['metadata']['id'] else workspace(request).name
+                payload['_semantic_passages']=search(tenant,record['metadata']['id'],question,payload['chunks'])
+            return answer_question(payload,question,record['metadata']['id'])
+        return await run_in_threadpool(respond)
     match=re.fullmatch(r'/documents/([a-f0-9]{24})(.*)',url)
     if not match:raise HTTPException(404,'Not found')
     doc_id,suffix=match.groups();record,original=load(request,doc_id);meta=record['metadata'];p=record['payload']

@@ -20,8 +20,11 @@ async def route(path:str,request:Request):
     if BACKEND_ORIGIN:
         token=request.cookies.get('fund_workspace','')
         if not re.fullmatch(r'[a-f0-9]{64}',token):token=secrets.token_hex(32)
-        async with httpx.AsyncClient(timeout=55) as client:
-            response=await client.request(request.method,BACKEND_ORIGIN+url,params={k:v for k,v in request.query_params.items() if k!='route'},content=await request.body(),headers={'Content-Type':request.headers.get('content-type','application/json'),'X-Workspace':token})
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                response=await client.request(request.method,BACKEND_ORIGIN+url,params={k:v for k,v in request.query_params.items() if k!='route'},content=await request.body(),headers={'Content-Type':request.headers.get('content-type','application/json'),'X-Workspace':token})
+        except httpx.RequestError:
+            raise HTTPException(503,'The research server is reconnecting. Please retry in a moment.')
         result=Response(response.content,status_code=response.status_code,headers={'Content-Type':response.headers.get('content-type','application/json'),'X-Backend':'OCI','Cache-Control':'private, no-store'})
         result.set_cookie('fund_workspace',token,max_age=60*60*24*30,httponly=True,secure=True,samesite='lax')
         return result

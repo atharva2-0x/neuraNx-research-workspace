@@ -12,3 +12,5 @@ output/
 deployment/.secrets/
 deploy/
 
+
+public/

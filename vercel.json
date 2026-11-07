@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "buildCommand": "python3 scripts/build_frontend.py",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "*.json",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/documents",
+      "destination": "/api/index?route=/documents"
+    },
+    {
+      "source": "/documents/:path*",
+      "destination": "/api/index?route=/documents/:path*"
+    },
+    {
+      "source": "/chat/query",
+      "destination": "/api/index?route=/chat/query"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/index?route=/health"
+    }
+  ]
+}
