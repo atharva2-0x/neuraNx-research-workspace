@@ -1,0 +1,6 @@
+{
+  "oci": "Running on an Always Free VM.Standard.E2.1.Micro instance in Mumbai, with 1 GB RAM and a 46.6 GB boot volume. FastAPI runs as a managed service. Vercel connects through an approved Cloudflare HTTPS demo tunnel. The tunnel address can change if its service restarts; use a permanent hostname or named tunnel for production.",
+  "instance": "neuranx-fund-api",
+  "public_ip": "92.4.81.209",
+  "connected": true
+}

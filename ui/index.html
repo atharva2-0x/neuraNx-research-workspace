@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore fund performance, ask questions, and inspect every answer against the original report.">
+  <title>Fund Intelligence · NeuraNx</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('fund-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch{}</script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/#overview" aria-label="Fund intelligence overview"><span class="brand-mark" aria-hidden="true">n<span>↗</span></span><span>NeuraNx<span class="brand-sub">Research workspace</span></span></a>
+    <div class="workspace-label">Your workspace</div>
+    <nav aria-label="Main navigation" id="nav"></nav>
+    <div class="sidebar-document"><div class="workspace-label">Active document</div><button class="document-select" id="document-menu" aria-label="Change active document"><span id="document-icon"></span><span class="document-name" id="active-filename">No report selected</span><span id="document-chevron"></span></button><div id="document-list" class="document-list" hidden></div><div class="sidebar-doc-meta" id="sidebar-doc-meta">Upload a PDF to get started</div></div>
+    <div class="sidebar-bottom"><div class="private-note"><span id="privacy-icon"></span><span>Local, private workspace</span></div><div class="theme-switch" role="group" aria-label="Appearance"><button id="light-theme" aria-label="Use light theme">Light</button><button id="dark-theme" aria-label="Use dark theme">Dark</button></div><div class="sidebar-foot">Financial document intelligence</div></div>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" id="mobile-menu" aria-label="Toggle navigation"></button><span>Research workspace</span><span class="crumb-separator">/</span><strong id="breadcrumb-current">Overview</strong></div><div class="topbar-right"><span class="connection"><i></i><span>Local workspace</span></span><span class="avatar" aria-label="Analyst workspace">A</span></div></header>
+    <main id="main" tabindex="-1"><div class="loading-state"><div class="loading-line"></div><h1>Opening your research workspace</h1><p>Preparing the report and its evidence</p></div></main>
+    <footer class="main-footer"><span>Synthetic fund data · For demonstration only</span><span>Source first. Every number traceable.</span></footer>
+  </div>
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div><aside class="evidence-drawer" id="evidence-drawer" aria-label="Source evidence" hidden></aside>
+  <dialog id="upload-dialog"><div class="dialog-heading"><h2>Add a report</h2><button class="icon-button" id="close-upload" aria-label="Close upload"></button></div><p class="secondary">Upload a PDF to extract its tables, check the numbers, and ask questions against its evidence</p><form id="upload-form"><label class="dropzone" id="dropzone" for="file-input"><span id="upload-icon"></span><strong>Choose a PDF or drop it here</strong><span>PDF only · Up to 25 MB · Up to 200 pages</span><input type="file" id="file-input" accept="application/pdf,.pdf" required></label><div id="upload-filename" class="file-chosen"></div><div class="upload-feedback" id="upload-feedback" role="status"></div><div class="dialog-actions"><button class="button primary" type="submit" id="upload-submit">Extract report</button></div></form></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

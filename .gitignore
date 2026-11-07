@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+data/input/*
+data/processed/*
+data/*.db*
+!data/input/.gitkeep
+!data/processed/.gitkeep
+output/
+.DS_Store
+deployment/.secrets/
+deploy/
+
