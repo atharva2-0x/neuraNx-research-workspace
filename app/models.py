@@ -2,7 +2,7 @@
 from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 
 class Source(BaseModel):
@@ -45,6 +45,17 @@ class Issue(BaseModel):
 class Query(BaseModel):
     document_id: str = Field(min_length=1, max_length=100)
     question: str = Field(min_length=2, max_length=2000)
+    provider: Literal["openai", "anthropic"] | None = None
+    api_key: SecretStr | None = Field(default=None, min_length=20, max_length=300)
+
+    @model_validator(mode="after")
+    def paired_credentials(self):
+        if bool(self.provider) != bool(self.api_key):
+            raise ValueError("Supply both provider and API key")
+        return self
+
+    def credentials(self):
+        return {"provider": self.provider, "api_key": self.api_key.get_secret_value()} if self.api_key else None
 
 
 class Calculation(BaseModel):

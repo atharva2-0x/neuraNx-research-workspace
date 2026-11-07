@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import JSONResponse, Response, FileResponse
 from app.answering import answer_question
+from app.provider import llm_status
 data=json.loads((Path(__file__).resolve().parents[1]/'evidence.json').read_text())
 meta=data['metadata'];payload=data['payload']
 app=FastAPI()
@@ -36,7 +37,7 @@ async def route(path:str,request:Request):
             request_payload={**payload,'_llm_credentials':{'provider':vendor,'api_key':api_key}}
         return answer_question(request_payload,question,meta['id'])
     if request.method=='PATCH':raise HTTPException(409,'Persistent review requires the OCI backend')
-    if url=='/health':return {'status':'ok','mode':'Vercel sample with per-request AI keys','oci_connected':False,'uploads_enabled':False}
+    if url=='/health':return {'status':'ok','mode':'Vercel sample with per-request AI keys','oci_connected':False,'uploads_enabled':False,'llm':llm_status()}
     if url=='/documents':return [meta]
     if not url.startswith('/documents/'+meta['id']):raise HTTPException(404,'Not found')
     suffix=url.split(meta['id'],1)[1]

@@ -33,6 +33,19 @@ def llm_provider() -> str:
     return os.getenv("LLM_PROVIDER", "anthropic").lower()
 
 
+def llm_status(credentials=None):
+    """Configuration only: readiness is not proof of a successful provider call."""
+    vendor = credentials["provider"] if credentials else llm_provider()
+    active = bool(credentials) or enabled("ENABLE_LLM")
+    key = credentials.get("api_key") if credentials else os.getenv(
+        "OPENAI_API_KEY" if vendor == "openai" else "ANTHROPIC_API_KEY")
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini") if vendor == "openai" else os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
+    configured = bool(key) and vendor in {"openai", "anthropic"}
+    return {"enabled": active, "configured": configured,
+            "provider": vendor, "model": model,
+            "state": "ready" if active and configured else "missing_key" if active else "disabled"}
+
+
 def embedding_provider() -> str:
     """Return 'local' or 'openai'."""
     return os.getenv("EMBEDDING_PROVIDER", "local").lower()
@@ -120,7 +133,7 @@ SYSTEM_INSTRUCTIONS = (
     "and draw qualitative conclusions supported by the evidence rather than demanding exact "
     "keywords. Answer the supported parts and state specific gaps.\n\n"
     "RESPONSE STRUCTURE REQUIREMENTS:\n"
-    "1. Always begin with a crisp, direct 2 to 4 liner executive summary answering the user's specific question in user-friendly, plain language.\n"
+    "1. Answer the specific question directly. For a lookup, acronym or category question, use one concise sentence; do not add background definitions, mechanisms or advice absent from the evidence. For a broader analysis, begin with a short executive summary.\n"
     "2. Follow with bullet points or clean Markdown tables for any detailed breakdown or comparisons.\n"
     "3. Keep conflicting source versions separate. Do not invent numbers. Return the requested schema."
 )
@@ -178,7 +191,7 @@ def _compose_anthropic(question, passages, api_key=None):
     system_prompt = (
         SYSTEM_INSTRUCTIONS + "\n\n"
         "Return a JSON object with exactly two keys:\n"
-        '  "answer": a clear, user-friendly explanation starting with a crisp 2-4 line executive summary (string, 1-5000 chars)\n'
+        '  "answer": a direct, concise evidence-only answer; use one sentence for simple lookups (string, 1-5000 chars)\n'
         '  "citation_pages": array of integer page numbers you cited\n'
         "Do not number lists. Do not introduce numeric tokens absent from the supplied passages. Put page numbers only in citation_pages. Return ONLY the JSON object, no markdown fencing or extra text."
     )
@@ -205,7 +218,7 @@ def _compose_anthropic(question, passages, api_key=None):
 
 def compose(question, passages, credentials=None):
     """Compose with configured or explicitly supplied, request-scoped credentials."""
-    passages = [{"page": p["page"], "content": p["content"][:1800]} for p in passages[:3]]
+    passages = [{"page": p["page"], "content": p["content"][:6000]} for p in passages[:12]]
     question = question[:1500]
     provider = credentials["provider"] if credentials else llm_provider()
     api_key = credentials.get("api_key") if credentials else None

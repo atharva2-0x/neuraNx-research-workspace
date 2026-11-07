@@ -90,7 +90,7 @@ def answer_question(payload,question,document_id):
             add_calculation("(ending NAV / starting NAV − 1) × 100",[start[0]["value"],end[0]["value"]],result,"percent",selected)
             if any(f["classification"]=="forecast" for f in selected):answer+=" The comparison includes a forecast endpoint."
         else:answer=unsupported()
-    elif re.search(r"\b(real|fictional|synthetic)\b",q) and not years:
+    elif re.search(r"\b(real|fictional|synthetic)\b",q) and not years and not re.search(r"allocation|allocated|distribution|risk profile|fees|stand for",q):
         route="semantic";method="source passage"
         p=next((p for p in payload["pages"] if "fictional" in p["text"].lower()),None)
         answer="The report explicitly says ABC Company Fund and all figures are fictional and created for demonstration. This is not a real fund report or investment advice." if p else unsupported()
@@ -141,7 +141,18 @@ def answer_question(payload,question,document_id):
                         add_calculation("fund return − benchmark return",[f["value"],b["value"]],gap,"percentage points",[f,b])
                     lines.append(f"| {period} | p. {f['source']['page']} | {f['value']}% | {b['value']+'%' if b else '—'} | {display(gap) if b else '—'} |")
             answer=("### Quarterly performance\n\nEach source version is shown separately; conflicting figures are not averaged. Differences are in percentage points.\n\n| Quarter | Source | Fund return | Benchmark | Difference (pp) |\n| --- | --- | --- | --- | --- |\n"+"\n".join(lines)) if lines else unsupported()
-    elif ("cagr" in q or "annualized" in q) and not ("what is" in q and not years):
+    elif re.search(r"underperform|outperform",q) and not years:
+        lines=[]
+        for year in historical_years:
+            fund=unique(find("fund_return",year,"historical"));bench=unique(find("benchmark_return",year,"historical"))
+            if not fund or not bench:continue
+            gap=difference(fund[0]['value'],bench[0]['value'])
+            if (gap < 0 if "underperform" in q else gap > 0):
+                selected += [fund[0],bench[0]]
+                lines.append(f"{year}: fund return {fund[0]['value']}%; benchmark {bench[0]['value']}%; difference {display(gap)} percentage points.")
+                add_calculation("fund return − benchmark return",[fund[0]['value'],bench[0]['value']],gap,"percentage points",[fund[0],bench[0]])
+        answer="\n".join(lines) or unsupported()
+    elif ("cagr" in q or "annualized" in q) and not re.search(r"stand for|glossary|define|meaning",q) and not ("what is" in q and not years):
         observations=sorted(unique(find("nav",classification="historical")),key=lambda f:f["period"])
         if years:observations=[f for f in observations if f["period"] in years]
         if len(observations)>=2:
@@ -149,7 +160,7 @@ def answer_question(payload,question,document_id):
             answer=f"The NAV-based CAGR from {start['period']} to {end['period']} is {display(result)}%, using {start['value']} and {end['value']} over {n} years. This is a derived NAV growth rate, distinct from the source-reported annual returns."
             add_calculation("((ending NAV / starting NAV)^(1 / years) − 1) × 100",[start["value"],end["value"],str(n)],result,"percent",selected)
         else:answer=unsupported("CAGR needs two reported historical NAV endpoints with distinct years.")
-    elif re.search(r"\b(allocation|sector|technology|market risk|management expense|institutional|regional|india|investor|portfolio composition)\b",q) and not ("why" in q or "assumption" in q):
+    elif re.search(r"\b(allocation|allocated|sector|technology|market risk|risk profile|expense breakdown|management fees|management expense|institutional|regional|india|investor|portfolio composition)\b",q) and not ("why" in q or "assumption" in q):
         dimensions=[f for f in facts if f["metric"]=="allocation"]
         group="Portfolio Allocation"
         if "risk" in q:group="Risk Profile"
@@ -159,6 +170,9 @@ def answer_question(payload,question,document_id):
         observations=unique([f for f in dimensions if f["period"].lower()==group.lower()])
         matching=[f for f in observations if f.get("category","").lower() in q]
         if matching:observations=matching
+        elif re.search(r"\d+(?:\.\d+)?\s*%",q):
+            target=decimal(re.search(r"(\d+(?:\.\d+)?)\s*%",q)[1])
+            observations=[f for f in observations if decimal(f['value'])==target]
         elif re.search(r"\b(largest|highest|biggest)\b",q) and observations:observations=[max(observations,key=lambda f:decimal(f["value"]))]
         selected=observations
         answer=f"{group} (source-reported): "+"; ".join(f"{f['category']} {f['value']}%" for f in observations)+". These are illustrative shares of this distribution, not a fund fee rate or real holdings." if observations else unsupported()
@@ -242,14 +256,6 @@ def answer_question(payload,question,document_id):
                 if content.startswith(title):content=content[len(title):].strip()
                 lines.append(f"{title} (p. {p['page']}): {content[:950]}")
             answer="The report states:\n\n"+"\n\n".join(lines)
-            credentials=payload.get("_llm_credentials")
-            if credentials or provider.enabled("ENABLE_LLM"):
-                try:
-                    kwargs = {"credentials": credentials} if credentials else {}
-                    composed=provider.compose(question,passages,**kwargs);answer=composed.answer;composer="llm";source_overrides=[s for s in source_overrides if s["page"] in composed.citation_pages]
-                except Exception:
-                    logger.exception("answer_composer_failed",extra={"document_id":document_id})
-                    warnings.append("The explanation provider is unavailable or failed evidence validation. Showing source passages instead.")
     selected_ids={f["id"] for f in selected}
     # Attach findings for the same metric/period even when an identical repeated
     # observation has a different ID on another page.
@@ -272,6 +278,35 @@ def answer_question(payload,question,document_id):
     valid_pages={p["number"] for p in payload["pages"]}
     assert all(s["page"] in valid_pages for s in sources)
     if answer.startswith("The report does not contain sufficient") and not selected:route="unsupported"
+    credentials=payload.get('_llm_credentials')
+    llm=provider.llm_status(credentials)
+    llm.update(attempted=False,used=False)
+    # Every supported, cited answer can be composed by the model. Arithmetic
+    # remains independently calculated and is supplied as verified evidence.
+    if sources and route not in {'clarification','unsupported'} and llm['enabled']:
+        if not llm['configured']:
+            warnings.append('LLM is enabled but no provider key is configured. Showing source evidence instead.')
+        else:
+            llm['attempted']=True
+            evidence=[]
+            for page in dict.fromkeys(s['page'] for s in sources):
+                chunks=[c['content'] for c in payload.get('chunks',[]) if c['page']==page]
+                text='\n'.join(chunks) or '\n'.join(s.get('excerpt','') for s in sources if s['page']==page)
+                if selected:
+                    text+='\nVerified source facts:\n'+'\n'.join(f"{f['period']} {f['metric']} {f.get('category') or ''}: {f['value']} {f['unit']}" for f in selected if f['source']['page']==page)
+                if calculations:text+='\nDeterministically calculated result (not a source-reported value):\n'+answer
+                evidence.append({'page':page,'content':text})
+            try:
+                kwargs={'credentials':credentials} if credentials else {}
+                composed=provider.compose(question,evidence,**kwargs)
+                answer=composed.answer;composer='llm';llm.update(state='used',used=True)
+                sources=[s for s in sources if s['page'] in composed.citation_pages]
+            except Exception as exc:
+                # Provider exceptions may embed request details: never log keys,
+                # raw provider messages, questions or document contents.
+                logger.warning('answer_composer_failed type=%s',type(exc).__name__)
+                llm['state']='failed'
+                warnings.append('The explanation provider is unavailable or failed evidence validation. Showing source evidence instead.')
     return {"answer":answer,"query_type":route,"calculations":calculations,"calculation":calculations[0] if calculations else None,
             "sources":sources,"warnings":list(dict.fromkeys(warnings)),"retrieval_method":method,"composer":composer,
-            "latency_ms":int((time.perf_counter()-started)*1000),"source_fact_ids":sorted(selected_ids)}
+            "latency_ms":int((time.perf_counter()-started)*1000),"source_fact_ids":sorted(selected_ids),"llm":llm}

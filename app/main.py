@@ -22,6 +22,7 @@ from app.db import DATA_DIR, Session, Document, FactRecord, ValidationRecord, Qu
 from app.pipeline import register, run_pipeline, pdf_path
 from app.models import Query
 from app.answering import answer_question
+from app.provider import llm_status
 
 ROOT=Path(__file__).resolve().parent.parent
 logger=logging.getLogger("fund.api")
@@ -74,7 +75,7 @@ def get_document(document_id,ready=False):
 @app.get("/health")
 def health():
     with engine.connect() as connection:connection.execute(text("SELECT 1"))
-    return {"status":"ok","database":engine.dialect.name,"pipeline_version":"1.0.0"}
+    return {"status":"ok","database":engine.dialect.name,"pipeline_version":"1.0.0","llm":llm_status()}
 
 
 @app.get("/documents")
@@ -250,7 +251,9 @@ def export(document_id:str):
 def query(body:Query):
     doc=get_document(body.document_id,True)
     if not body.question.strip():raise HTTPException(422,"Please enter a question")
-    response=answer_question(doc.payload,body.question.strip(),body.document_id)
+    payload = dict(doc.payload)
+    if body.credentials():payload['_llm_credentials'] = body.credentials()
+    response=answer_question(payload,body.question.strip(),body.document_id)
     with Session() as session:
         session.add(QueryLog(document_id=body.document_id,route=response["query_type"],latency_ms=response["latency_ms"],source_pages=[s["page"] for s in response["sources"]]))
         session.add_all([CalculationRecord(document_id=body.document_id,data=c) for c in response["calculations"]])

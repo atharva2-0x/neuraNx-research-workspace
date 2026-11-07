@@ -12,6 +12,8 @@ import pdfplumber
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from app.answering import answer_question
+from app.provider import llm_status
+from app.models import Query
 from starlette.concurrency import run_in_threadpool
 from app.extraction import extract_pdf, normalize, summarize
 from app.validation import validate
@@ -66,7 +68,7 @@ def process(path,record):
 @app.api_route('/{path:path}',methods=['GET','POST','PATCH'])
 async def route(path:str,request:Request,tasks:BackgroundTasks):
     url=request.url.path
-    if url=='/health':return {'status':'ok','mode':'OCI private browser workspaces','oci_connected':True,'uploads_enabled':True}
+    if url=='/health':return {'status':'ok','mode':'OCI private browser workspaces','oci_connected':True,'uploads_enabled':True,'llm':llm_status()}
     if url=='/documents' and request.method=='GET':
         folder=workspace(request)
         return [json.loads(p.read_text())['metadata'] for p in sorted(folder.glob('*.json'),key=lambda p:p.stat().st_mtime,reverse=True)]+[SEED['metadata']]
@@ -94,8 +96,11 @@ async def route(path:str,request:Request,tasks:BackgroundTasks):
         body=await request.json();record,_=load(request,body.get('document_id',''));question=body.get('question','')
         if not isinstance(question,str) or not 2<=len(question.strip())<=2000:raise HTTPException(422,'Enter a question between 2 and 2000 characters')
         if record['metadata']['status']!='completed':raise HTTPException(409,'The report is still processing')
+        try:query = Query.model_validate(body)
+        except ValueError:raise HTTPException(422,'Supply a valid question and paired provider credentials')
         def respond():
             payload=dict(record['payload'])
+            if query.credentials():payload['_llm_credentials'] = query.credentials()
             if os.getenv('HOSTED_VECTORS')=='true':
                 from app.hosted_vector import search
                 tenant='shared' if record['metadata']['id']==SEED['metadata']['id'] else workspace(request).name
