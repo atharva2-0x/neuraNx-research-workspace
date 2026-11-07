@@ -8,7 +8,7 @@ function harness(storage=new Map()){
  const timers=[];
  const context=vm.createContext({crypto:require('node:crypto').webcrypto,Date,performance,
   localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},
-  document:{getElementById:()=>null},setTimeout:fn=>timers.push(fn),
+  document:{body:{dataset:{}},getElementById:()=>null},setTimeout:fn=>timers.push(fn),
   history:{pushState(){}},location:{hash:'#chat'}});
  vm.runInContext(source.slice(0,source.indexOf('async function api(')),context);
  vm.runInContext("function toast(){};function render(){};state.id='report-a';state.data={};",context);

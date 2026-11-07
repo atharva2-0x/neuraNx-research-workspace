@@ -108,16 +108,18 @@ function chart(){
  const forecastPoints=rows.map((r,i)=>({r,i})).filter(({r,i})=>isForecast(r)||(!isForecast(r)&&isForecast(rows[i+1]||{})));
  const line=points=>points.map(({r,i},j)=>`${j?'L':'M'}${x(i).toFixed(1)},${y(r.nav).toFixed(1)}`).join(' ');
  const firstForecast=rows.findIndex(isForecast),regionStart=firstForecast>0?(x(firstForecast-1)+x(firstForecast))/2:L;
- let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Reported and forecast net asset value, ${esc(rows[0].year)} to ${esc(rows.at(-1).year)}"><title>NAV from source tables. Dashed values are forecasts, not historical outcomes.</title>`;
+ const area=points=>points.length<2?'':`${line(points)} L${x(points.at(-1).i)},${H-B} L${x(points[0].i)},${H-B} Z`;
+ let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="group" aria-label="Reported and forecast net asset value, ${esc(rows[0].year)} to ${esc(rows.at(-1).year)}"><title>NAV from source tables. Dashed values are forecasts, not historical outcomes.</title>`;
  if(firstForecast>=0)svg+=`<rect class="chart-region" x="${regionStart}" y="${T-16}" width="${W-R-regionStart}" height="${H-B-T+16}" rx="4"/><text class="chart-annotation" x="${regionStart+12}" y="${T}">Forecast</text>`;
  for(let i=0;i<=4;i++){const v=min+(max-min)*i/4,yy=y(v);svg+=`<line class="chart-grid" x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}"/><text class="chart-label" text-anchor="end" x="${L-12}" y="${yy+4}">${number(v,0)}</text>`}
- svg+=`<defs><clipPath id="nav-series-clip"><rect class="nav-reveal-rect" x="0" y="0" width="${W}" height="${H}"/></clipPath></defs><g clip-path="url(#nav-series-clip)">`;
+ svg+=`<defs><linearGradient id="nav-stroke" x1="0" x2="1" y1="0" y2="0"><stop stop-color="var(--chart)"/><stop offset="1" stop-color="var(--chart-end)"/></linearGradient><linearGradient id="nav-fill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="var(--chart)" stop-opacity=".24"/><stop offset="1" stop-color="var(--chart-end)" stop-opacity=".015"/></linearGradient><clipPath id="nav-series-clip"><rect class="nav-reveal-rect" x="0" y="0" width="${W}" height="${H}"/></clipPath></defs><g clip-path="url(#nav-series-clip)">`;
+ for(const points of [histPoints,forecastPoints])if(points.length>1)svg+=`<path class="chart-area" d="${area(points)}"/>`;
  if(histPoints.length)svg+=`<path class="chart-line" d="${line(histPoints)}"/>`;
  if(forecastPoints.length)svg+=`<path class="chart-line chart-forecast" d="${line(forecastPoints)}"/>`;
- rows.forEach((r,i)=>{svg+=`<circle class="chart-dot" cx="${x(i)}" cy="${y(r.nav)}" r="${i===rows.length-1||(!isForecast(r)&&isForecast(rows[i+1]||{}))?4:2.5}"/><text class="chart-label" text-anchor="middle" x="${x(i)}" y="${H-12}">${r.year}</text><rect class="chart-hit" tabindex="0" role="button" aria-label="${r.year} NAV ${number(r.nav,1)}${isForecast(r)?' forecast':''}, view source page ${r.page}" data-chart-year="${r.year}" data-chart-nav="${r.nav}" data-chart-page="${r.page}" data-chart-forecast="${isForecast(r)}" data-evidence="${r.page}" x="${x(i)-20}" y="${T}" width="40" height="${H-B-T}"><title>${r.year}: ${number(r.nav,1)} · ${isForecast(r)?'Forecast':'Historical'} · p. ${r.page}</title></rect>`});
+ rows.forEach((r,i)=>{svg+=`<circle class="chart-dot" cx="${x(i)}" cy="${y(r.nav)}" r="${i===rows.length-1||(!isForecast(r)&&isForecast(rows[i+1]||{}))?4:2.5}"/><text class="chart-label" text-anchor="middle" x="${x(i)}" y="${H-12}">${r.year}</text><rect class="chart-hit" tabindex="0" role="button" aria-label="${r.year} NAV ${number(r.nav,1)}${isForecast(r)?' forecast':''}, view source page ${r.page}" data-chart-year="${r.year}" data-chart-nav="${r.nav}" data-chart-page="${r.page}" data-chart-forecast="${isForecast(r)}" data-evidence="${r.page}" x="${Math.max(L,x(i)-(W-L-R)/(rows.length-1)/2)}" y="${T}" width="${(W-L-R)/(rows.length-1)/(i===0||i===rows.length-1?2:1)}" height="${H-B-T}"><title>${r.year}: ${number(r.nav,1)} · ${isForecast(r)?'Forecast':'Historical'} · p. ${r.page}</title></rect>`});
  svg+='</g></svg>';
  const pages=[...new Set(rows.map(r=>r.page))];
- return `<div class="chart-box">${svg}<div class="chart-tooltip" id="chart-tooltip" hidden></div></div><div class="chart-footer"><div class="legend"><span><i></i>Reported NAV</span><span><i class="dashed"></i>Forecast NAV</span></div><button class="text-link" data-evidence="${pages[0]}">Source tables ${icon('arrow')}</button></div>`;
+ return `<div class="chart-box">${svg}<div class="chart-tooltip" id="chart-tooltip" hidden></div></div><p class="chart-help">Hover or focus a year for NAV · Select it to inspect source evidence</p><div class="chart-footer"><div class="legend"><span><i></i>Reported NAV</span><span><i class="dashed"></i>Forecast NAV</span></div><button class="text-link" data-evidence="${pages[0]}">Source tables ${icon('arrow')}</button></div>`;
 }
 function annualTable(){
  const rows=state.data.annual;
@@ -237,12 +239,23 @@ function bind(){
  el('main').querySelectorAll('[data-conversation]').forEach(b=>b.addEventListener('click',()=>openConversation(b.dataset.conversation)));
  el('main').querySelectorAll('[data-upload]').forEach(b=>b.addEventListener('click',openUpload));
  el('main').querySelectorAll('[data-export]').forEach(b=>b.addEventListener('click',exportFindings));
- el('main').querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',()=>{state.range=b.dataset.range;render()}));
+ el('main').querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',()=>{state.range=b.dataset.range;render();el('main').querySelector(`[data-range="${state.range}"]`)?.focus({preventScroll:true})}));
  el('main').querySelectorAll('[data-quality]').forEach(b=>b.addEventListener('click',()=>{state.quality=b.dataset.quality;render()}));
  el('main').querySelectorAll('[data-question]').forEach(b=>b.addEventListener('click',()=>ask(b.dataset.question)));
  el('main').querySelectorAll('.query-form').forEach(f=>f.addEventListener('submit',e=>{e.preventDefault();const q=new FormData(f).get('question')?.trim();if(q)ask(q)}));
  el('main').querySelectorAll('[data-evidence]').forEach(b=>{b.addEventListener('click',()=>openEvidence(Number(b.dataset.evidence)));if(b.tagName.toLowerCase()==='rect')b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openEvidence(Number(b.dataset.evidence))}})});
- el('main').querySelectorAll('[data-chart-year]').forEach(b=>{const show=()=>{const t=el('chart-tooltip');if(t){t.innerHTML=`${esc(b.dataset.chartYear)} · ${b.dataset.chartForecast==='true'?'Forecast':'Historical'}<strong>${number(b.dataset.chartNav,1)}</strong>p. ${esc(b.dataset.chartPage)} · Click to inspect`;t.hidden=false}};b.addEventListener('mouseenter',show);b.addEventListener('focus',show);b.addEventListener('mouseleave',()=>{if(el('chart-tooltip'))el('chart-tooltip').hidden=true});b.addEventListener('blur',()=>{if(el('chart-tooltip'))el('chart-tooltip').hidden=true})});
+ el('main').querySelectorAll('[data-chart-year]').forEach(b=>{
+  const hide=()=>{if(el('chart-tooltip'))el('chart-tooltip').hidden=true;b.classList.remove('chart-active')};
+  const show=()=>{const t=el('chart-tooltip');if(!t)return;
+   t.innerHTML=`<span>${esc(b.dataset.chartYear)} · ${b.dataset.chartForecast==='true'?'Forecast':'Reported'}</span><strong>${number(b.dataset.chartNav,1)} <small>NAV</small></strong><span>Page ${esc(b.dataset.chartPage)} · Select to inspect</span>`;
+   t.hidden=false;b.classList.add('chart-active');
+   const box=b.closest('.chart-box').getBoundingClientRect(),point=b.getBoundingClientRect();
+   t.style.left=`${Math.max(8,Math.min(point.left+point.width/2-box.left-t.offsetWidth/2,box.width-t.offsetWidth-8))}px`;
+   t.style.top='12px';
+  };
+  b.addEventListener('pointerenter',show);b.addEventListener('focus',show);b.addEventListener('pointerleave',hide);b.addEventListener('blur',hide);
+  b.addEventListener('keydown',e=>{if(e.key==='Escape')hide();if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();const points=[...el('main').querySelectorAll('[data-chart-year]')],index=points.indexOf(b);points[Math.max(0,Math.min(points.length-1,index+(e.key==='ArrowRight'?1:-1)))].focus()}});
+ });
  el('main').querySelectorAll('[data-source-page]').forEach(b=>b.addEventListener('click',()=>{state.page=Number(b.dataset.sourcePage);render()}));
  el('main').querySelectorAll('[data-page-step]').forEach(b=>b.addEventListener('click',()=>{state.page=Math.max(1,Math.min(state.data.pages.length,state.page+Number(b.dataset.pageStep)));render()}));
  el('main').querySelectorAll('[data-source-mode]').forEach(b=>b.addEventListener('click',()=>{state.sourceMode=b.dataset.sourceMode;render()}));

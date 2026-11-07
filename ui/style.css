@@ -79,3 +79,26 @@ main.chat-page{max-width:none;padding:24px}
 @media(prefers-reduced-motion:reduce){.architecture-map-node{opacity:1;animation:none}.architecture-signal{stroke-dashoffset:0;animation:none}.architecture-packet{display:none}}
 
 .connect-panel{padding:24px;max-width:720px}.connect-status{display:flex;align-items:flex-start;gap:12px;padding:8px 0 20px}.connect-status>.icon{color:var(--accent)}.connect-status strong{font-size:14px;font-weight:500}.connect-status p{font-size:12px;color:var(--secondary);margin-top:6px;line-height:1.7}.connect-form{display:grid;gap:16px;margin-top:12px}.connect-form label{display:grid;gap:7px;font-size:12px;color:var(--secondary)}.connect-form input,.connect-form select{width:100%;min-height:42px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}.connect-form .button{justify-self:start}.connect-feedback{font-size:12px;color:var(--warning);min-height:0}.connect-privacy{max-width:720px;margin-top:24px;border-top:1px solid var(--line);padding-top:20px}.connect-privacy h2{font-size:14px}.connect-privacy ul{padding-left:20px;color:var(--secondary);font-size:12px;line-height:1.8}.connect-privacy li{margin:8px 0}.connect-actions{display:flex;flex-wrap:wrap;gap:8px}.danger-button{color:var(--negative)}
+
+/* Chart-led polish, following unslop by Damir Sokolovsky (@heydamir), CC BY 4.0. */
+:root{--chart-end:#188d9b}
+[data-theme=dark]{--chart-end:#69cbd6}
+.chart-line{stroke:url(#nav-stroke);stroke-width:3}
+.chart-area{fill:url(#nav-fill);pointer-events:none}
+.chart-forecast{stroke-width:2.5}
+.chart-hit{transition:fill .16s var(--ease),opacity .16s var(--ease)}
+.chart-hit:hover,.chart-hit:focus-visible,.chart-hit.chart-active{fill:var(--chart);opacity:.1;outline:none;stroke:var(--chart);stroke-width:1}
+.chart-help{font-size:11px;color:var(--secondary);padding:8px 24px 0}
+.chart-tooltip{max-width:calc(100% - 16px);min-width:156px;font-variant-numeric:tabular-nums;border-color:var(--chart);}
+.chart-tooltip span{color:var(--secondary)}.chart-tooltip strong{font-size:22px;line-height:1.4}.chart-tooltip small{font-size:11px;font-weight:400;color:var(--secondary)}
+.legend i{border:0;height:2px;background:linear-gradient(90deg,var(--chart),var(--chart-end))}
+.legend i.dashed{height:0;background:none;border-top:2px dashed var(--chart-end)}
+.bar-fill{background:linear-gradient(90deg,var(--chart),var(--chart-end))}
+.segmented button{min-height:32px;padding:6px 12px;font-size:11px}
+.segmented button:hover:not(.selected){background:var(--surface);color:var(--text)}
+.query-input-wrap{transition:border-color .16s var(--ease),background .16s var(--ease)}
+.query-input-wrap:focus-within{background:var(--surface);box-shadow:0 0 0 2px var(--accent-soft)}
+tbody tr:hover{background:var(--raised)}
+.document-list button:focus-visible{background:var(--raised)}
+@media(max-width:800px){.sidebar{overflow-y:auto}.icon-button,.query-send{min-width:44px;min-height:44px}.nav-item{min-height:44px}.segmented button{min-height:40px}.suggestion,.metric-source,.text-link{min-height:36px}.chart-help{padding:8px 16px 0}.chart-panel .panel-header{flex-wrap:wrap;align-items:flex-start;gap:16px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}.architecture-map-node{opacity:1}.architecture-signal{stroke-dashoffset:0}}
