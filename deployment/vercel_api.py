@@ -6,7 +6,7 @@ import re
 import httpx
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from app.answering import answer_question
 data=json.loads((Path(__file__).resolve().parents[1]/'evidence.json').read_text())
 meta=data['metadata'];payload=data['payload']
@@ -17,6 +17,15 @@ BACKEND_ORIGIN=os.getenv('BACKEND_ORIGIN') or (json.loads(backend_file.read_text
 @app.api_route('/{path:path}',methods=['GET','POST','PATCH'])
 async def route(path:str,request:Request):
     url=request.query_params.get("route",request.url.path)
+    root=Path(__file__).resolve().parents[1]
+    if url=='/':
+        html=(root/'ui/index.html').read_text().replace('Local, private workspace','Private browser workspace').replace('Local workspace','Private browser workspace').replace('Up to 25 MB','Up to 4 MB')
+        return Response(html,media_type='text/html')
+    if url in {'/static/app.js','/static/style.css','/static/favicon.svg'}:
+        target=root/'ui'/url.split('/')[-1]
+        if url.endswith('.js'):return Response(target.read_text().replace('25*1024*1024','4*1024*1024').replace('smaller than 25 MB','smaller than 4 MB'),media_type='application/javascript')
+        return FileResponse(target)
+    if url in {'/deck.html','/interview-preparation.html'}:return FileResponse(root/'docs'/url[1:])
     if BACKEND_ORIGIN:
         token=request.cookies.get('fund_workspace','')
         if not re.fullmatch(r'[a-f0-9]{64}',token):token=secrets.token_hex(32)

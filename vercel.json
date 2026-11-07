@@ -4,7 +4,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/index.py": {
-      "includeFiles": "*.json",
+      "includeFiles": "{*.json,ui/**,docs/*.html}",
       "maxDuration": 60
     }
   },
