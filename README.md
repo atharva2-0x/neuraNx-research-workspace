@@ -1,6 +1,14 @@
 # NeuraNx DMS — RAG-Powered Document Management Chatbot
 
-A Python-based chatbot for a **Document Management System (DMS)** using **Retrieval-Augmented Generation (RAG)**. Supports **Anthropic Claude** and **OpenAI GPT** as LLM providers, with local or OpenAI embeddings, and PostgreSQL + pgvector for vector storage.
+A Python financial document research workspace for the NeuraNx DMS assignment. Upload reports, inspect extracted facts and validation findings, ask questions with source citations, and export findings. The sample ABC Company Fund report is fictional.
+
+## Cloud hosted application
+
+The public UI is served by Vercel at [neuranx-fund-intelligence.vercel.app](https://neuranx-fund-intelligence.vercel.app/). Its API proxy forwards document and question requests over HTTPS to the persistent OCI service at `92-4-81-209.sslip.io`, with Caddy providing TLS. Uvicorn and PostgreSQL remain private on the VM. Uploads and extracted evidence persist on OCI; Vercel's serverless filesystem is not used for durable data.
+
+Hosted uploads are limited to 4 MB, 200 pages, and 10 reports per browser workspace. The workspace is identified by a secure browser cookie, so clearing cookies removes access to those private reports. The fictional sample is shared and read-only. OCI changes must be deployed and the `neuranx-api` service restarted separately; pushing to `main` deploys the Vercel UI and proxy, not the OCI backend. See [deployment operations](deployment/README.md) and the [configuration and recovery handbook](docs/CONFIGURATION_HANDBOOK.md).
+
+The OCI service can enable local BGE-small embeddings with PostgreSQL/pgvector using `HOSTED_VECTORS=true`; its live status is available from `/health`. LLM composition requires a supported provider and a server-side API key. Hosted and local environment variables are independent. Do not put secrets in frontend code or commit them.
 
 ---
 
@@ -57,46 +65,41 @@ A Python-based chatbot for a **Document Management System (DMS)** using **Retrie
 
 ---
 
-## Quick Start
+## Run locally
 
 ### Prerequisites
 
-- **Docker** and **Docker Compose** (v2)
-- **Anthropic API Key** (https://console.anthropic.com/) *or* **OpenAI API Key** (https://platform.openai.com/)
+- Python 3.11 or newer (Python 3.12 recommended)
+- Optional: Docker and Docker Compose v2 for PostgreSQL/pgvector
 
-### 1. Clone and configure
+### 1. Create a Python environment
 
 ```bash
-cd neuraNx-research-workspace
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev,fast-pdf]'
 ```
 
-Edit `.env` and add your API key. For **Anthropic** (default):
+SQLite at `data/fund.db` is the default, so basic local use needs no database server or provider key. Start the app bound to your own machine:
 
-```env
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+```sh
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Or for **OpenAI**:
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). To use the sample locally, place its PDF in `data/input/` (that folder is not included in a fresh clone); PDFs there are ingested at startup. Or upload one using **Add report**. Local uploads use the full app's default 25 MB limit and a 200-page maximum.
 
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-your-key-here
-# If also using OpenAI embeddings instead of local:
-EMBEDDING_PROVIDER=openai
-```
+For optional configuration, copy `.env.example` to `.env`. `DATABASE_URL` and `DATA_DIR` choose the local database and storage path. LLM composition requires `ENABLE_LLM=true`, a supported `LLM_PROVIDER`, and its API key. OpenAI embeddings require `ENABLE_EMBEDDINGS=true` and `OPENAI_API_KEY`; these differ from OCI's BGE/pgvector configuration. Restart the app after changing `.env`.
 
-### 2. Start with Docker Compose (recommended)
+### 2. Optional: Docker with PostgreSQL/pgvector
 
 ```bash
 docker compose up --build
 ```
 
-This starts:
-- **PostgreSQL 16 + pgvector** on port 5432
-- **FastAPI application** on http://localhost:8000
+This starts the FastAPI app and PostgreSQL with pgvector. The app is reachable only from your computer at http://127.0.0.1:8000. App files persist under `data/`; PostgreSQL data persists in a Docker volume. `docker compose down` preserves that volume; `docker compose down -v` deletes it.
 
-Open **http://localhost:8000** in your browser.
+Compose uses local development database credentials. Provider keys are optional and needed only for provider-generated explanations.
 
 ### 3. Upload a document and chat
 
