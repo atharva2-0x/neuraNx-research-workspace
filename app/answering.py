@@ -12,6 +12,58 @@ logger=logging.getLogger("fund.answering")
 
 
 def answer_question(payload,question,document_id):
+    """Let the enabled model interpret intent against document evidence first."""
+    started=time.perf_counter()
+    credentials=payload.get('_llm_credentials')
+    status=provider.llm_status(credentials)
+    if status['enabled'] and status['configured']:
+        pages=payload.get('pages',[])
+        passages=[{'page':p['number'],'content':p.get('text',''),'section':p.get('section','')} for p in pages if p.get('text')]
+        if not passages:
+            passages=payload.get('_semantic_passages') or retrieve(question,payload.get('chunks',[]),limit=16)
+        # Small reports fit in bounded whole-document context, avoiding keyword
+        # routing that drops footnotes, headers and cross-page comparisons.
+        if sum(len(p['content']) for p in passages)>100000 or len(passages)>64:
+            passages=retrieve(question,payload.get('chunks',[]),limit=16)
+            requested={int(n) for n in re.findall(r'\bpage\s+(\d+)\b',question.lower())}
+            passages=[p for p in pages if p['number'] in requested]+passages
+            passages=[{'page':p.get('page',p.get('number')),'content':p.get('content',p.get('text','')),'section':p.get('section','')} for p in passages]
+        for passage in passages:
+            page=next((p for p in pages if p['number']==passage['page']),{})
+            for table in page.get('tables',[]):
+                rows=table.get('rows',[])
+                if rows:
+                    passage['content']+='\nExtracted table: '+str(len(rows[0]))+' columns. Exact headers: '+ ' | '.join(str(v or '') for v in rows[0])+'\n'
+                    passage['content']+='\n'.join(' | '.join(str(v or '') for v in row) for row in rows[1:])
+        try:
+            kwargs={'credentials':credentials} if credentials else {}
+            composed=provider.compose(question,passages,**kwargs)
+            status.update(state='used',attempted=True,used=True)
+            sources=[]
+            for number in dict.fromkeys(composed.citation_pages):
+                p=next(p for p in passages if p['page']==number)
+                sources.append({'page':number,'section':p.get('section','Source evidence'),'excerpt':p['content'],'document_id':document_id})
+            calculations=[{'formula':c.operation,'inputs':c.inputs,'result':c.result,'unit':'derived; see answer','fact_ids':[]} for c in composed.calculations]
+            return {'answer':composed.answer,'query_type':'clarification' if composed.ambiguity else 'unsupported' if composed.insufficient_evidence else 'semantic',
+                'sources':sources,'calculations':calculations,'calculation':calculations[0] if calculations else None,
+                'warnings':['All fund figures in this report are fictional demonstration data.'] if payload.get('synthetic') else [],
+                'composer':'llm','llm':status,'retrieval_method':'Bounded document evidence; LLM semantic intent',
+                'latency_ms':int((time.perf_counter()-started)*1000),'source_fact_ids':[]}
+        except Exception as exc:
+            logger.warning('semantic_answer_failed type=%s',type(exc).__name__)
+            status.update(state='failed',attempted=True,used=False)
+            fallback=_answer_deterministic({**payload,'_skip_llm':True},question,document_id)
+            # A provider failure is not proof that the user's question is ambiguous.
+            if fallback['query_type']=='clarification':
+                fallback.update(query_type='unsupported',answer='The LLM could not complete this request. Please retry; the application has not established that your question is ambiguous.')
+            fallback['llm']=status
+            fallback['warnings'].append('The explanation provider is unavailable or failed evidence validation. Showing source-only fallback.')
+            fallback['latency_ms']=int((time.perf_counter()-started)*1000)
+            return fallback
+    return _answer_deterministic(payload,question,document_id)
+
+
+def _answer_deterministic(payload,question,document_id):
     started=time.perf_counter()
     q=question.lower().strip()
     facts=payload["facts"]
@@ -283,7 +335,7 @@ def answer_question(payload,question,document_id):
     llm.update(attempted=False,used=False)
     # Every supported, cited answer can be composed by the model. Arithmetic
     # remains independently calculated and is supplied as verified evidence.
-    if sources and route not in {'clarification','unsupported'} and llm['enabled']:
+    if sources and route not in {'clarification','unsupported'} and llm['enabled'] and not payload.get('_skip_llm'):
         if not llm['configured']:
             warnings.append('LLM is enabled but no provider key is configured. Showing source evidence instead.')
         else:
